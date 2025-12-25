@@ -1,0 +1,316 @@
+{
+  "name": "Flow ショート動画自動生成",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 6
+            }
+          ]
+        }
+      },
+      "id": "flow-schedule-trigger",
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        -640,
+        368
+      ],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "command": "cat > /home/node/scripts/flow-video-auto.js << 'SCRIPT_EOF'\nconst { chromium } = require('playwright');\nconst fs = require('fs');\nconst path = require('path');\n\nasync function run() {\n  const inputArg = process.argv[2];\n  let config = {\n    prompt: '',\n    model: 'fast',\n    projectUrl: null,\n    waitTimeout: 600000,\n  };\n\n  if (inputArg) {\n    try {\n      const parsed = JSON.parse(inputArg);\n      config = { ...config, ...parsed };\n    } catch (e) {\n      console.log(JSON.stringify({ error: 'Invalid JSON input' }));\n      process.exit(1);\n    }\n  }\n\n  if (!config.prompt) {\n    console.log(JSON.stringify({ error: 'Prompt is required' }));\n    process.exit(1);\n  }\n\n  console.error('=== Google Flow Video Generation ===');\n  console.error('Prompt: ' + config.prompt.substring(0, 100) + '...');\n  console.error('Model: ' + config.model);\n\n  let browser;\n  try {\n    browser = await chromium.connectOverCDP('http://192.168.65.254:9222');\n    const context = browser.contexts()[0];\n    const page = await context.newPage();\n\n    const flowUrl = config.projectUrl || 'https://labs.google/fx/tools/flow';\n    console.error('Navigating to: ' + flowUrl);\n    await page.goto(flowUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });\n    await page.waitForTimeout(5000);\n\n    const url = page.url();\n    console.error('Current URL: ' + url);\n\n    if (url.includes('accounts.google.com') || url.includes('signin')) {\n      await page.screenshot({ path: '/home/node/scripts/flow-login-required.png' });\n      await page.close();\n      console.log(JSON.stringify({\n        error: 'Not logged in to Google',\n        screenshot: '/home/node/scripts/flow-login-required.png'\n      }));\n      process.exit(1);\n    }\n\n    await page.waitForTimeout(3000);\n\n    if (!config.projectUrl) {\n      console.error('Looking for New Project button...');\n      const newProjectBtn = await page.$('button:has-text(\"New project\"), [aria-label*=\"New project\"]');\n      if (newProjectBtn) {\n        console.error('Clicking New Project...');\n        await newProjectBtn.click();\n        await page.waitForTimeout(3000);\n      }\n    }\n\n    await page.screenshot({ path: '/home/node/scripts/flow-step1-loaded.png' });\n    console.error('Screenshot saved: flow-step1-loaded.png');\n\n    console.error('Selecting Text to Video mode...');\n    const textToVideoSelector = await page.$('button:has-text(\"Text to Video\"), [aria-label*=\"Text to Video\"]');\n    if (textToVideoSelector) {\n      await textToVideoSelector.click();\n      await page.waitForTimeout(1000);\n    }\n\n    console.error('Looking for prompt input...');\n    const promptSelectors = [\n      'textarea[placeholder*=\"prompt\"]',\n      'textarea[placeholder*=\"Prompt\"]',\n      'div[role=\"textbox\"]',\n      'textarea',\n      '[contenteditable=\"true\"]'\n    ];\n\n    let promptInput = null;\n    for (const selector of promptSelectors) {\n      promptInput = await page.$(selector);\n      if (promptInput) {\n        console.error('Found prompt input with selector: ' + selector);\n        break;\n      }\n    }\n\n    if (!promptInput) {\n      await page.screenshot({ path: '/home/node/scripts/flow-no-prompt-input.png' });\n      await page.close();\n      console.log(JSON.stringify({\n        error: 'Could not find prompt input',\n        screenshot: '/home/node/scripts/flow-no-prompt-input.png'\n      }));\n      process.exit(1);\n    }\n\n    console.error('Entering prompt...');\n    await promptInput.click();\n    await page.waitForTimeout(500);\n    await promptInput.fill('');\n    await promptInput.fill(config.prompt);\n    await page.waitForTimeout(1000);\n\n    await page.screenshot({ path: '/home/node/scripts/flow-step2-prompt-entered.png' });\n    console.error('Screenshot saved: flow-step2-prompt-entered.png');\n\n    console.error('Looking for Generate button...');\n    const generateSelectors = [\n      'button:has-text(\"Generate\")',\n      'button[aria-label*=\"Generate\"]',\n      'button:has-text(\"生成\")'\n    ];\n\n    let generateBtn = null;\n    for (const selector of generateSelectors) {\n      generateBtn = await page.$(selector);\n      if (generateBtn) {\n        console.error('Found Generate button with selector: ' + selector);\n        break;\n      }\n    }\n\n    if (!generateBtn) {\n      await page.screenshot({ path: '/home/node/scripts/flow-no-generate-btn.png' });\n      await page.close();\n      console.log(JSON.stringify({\n        error: 'Could not find Generate button',\n        screenshot: '/home/node/scripts/flow-no-generate-btn.png'\n      }));\n      process.exit(1);\n    }\n\n    console.error('Clicking Generate...');\n    await generateBtn.click();\n    await page.waitForTimeout(3000);\n\n    await page.screenshot({ path: '/home/node/scripts/flow-step3-generating.png' });\n    console.error('Screenshot saved: flow-step3-generating.png');\n\n    console.error('Waiting for video generation (max ' + (config.waitTimeout / 60000) + ' minutes)...');\n\n    const startTime = Date.now();\n    let videoGenerated = false;\n    let videoUrl = null;\n\n    while (Date.now() - startTime < config.waitTimeout) {\n      await page.waitForTimeout(10000);\n\n      const elapsed = Math.round((Date.now() - startTime) / 1000);\n      console.error('Elapsed: ' + elapsed + 's');\n\n      const videoElement = await page.$('video');\n      if (videoElement) {\n        const src = await videoElement.getAttribute('src');\n        if (src && src.startsWith('http')) {\n          videoUrl = src;\n          videoGenerated = true;\n          console.error('Video generated! URL: ' + videoUrl.substring(0, 100) + '...');\n          break;\n        }\n      }\n\n      const errorMsg = await page.$('[role=\"alert\"], .error-message');\n      if (errorMsg) {\n        const errorText = await errorMsg.innerText();\n        if (errorText.toLowerCase().includes('error')) {\n          await page.screenshot({ path: '/home/node/scripts/flow-error.png' });\n          await page.close();\n          console.log(JSON.stringify({\n            error: 'Generation error: ' + errorText,\n            screenshot: '/home/node/scripts/flow-error.png'\n          }));\n          process.exit(1);\n        }\n      }\n\n      if (elapsed % 60 === 0) {\n        await page.screenshot({ path: '/home/node/scripts/flow-progress-' + elapsed + 's.png' });\n      }\n    }\n\n    await page.screenshot({ path: '/home/node/scripts/flow-final-result.png' });\n    console.error('Final screenshot saved: flow-final-result.png');\n\n    const projectUrl = page.url();\n    await page.close();\n\n    const result = {\n      success: videoGenerated,\n      videoUrl: videoUrl,\n      projectUrl: projectUrl,\n      screenshot: '/home/node/scripts/flow-final-result.png',\n      generationTime: Math.round((Date.now() - startTime) / 1000) + 's'\n    };\n\n    console.log(JSON.stringify(result));\n\n  } catch (e) {\n    console.error('Error: ' + e.message);\n    console.log(JSON.stringify({\n      error: e.message,\n      stack: e.stack\n    }));\n    process.exit(1);\n  }\n}\n\nrun().catch(e => {\n  console.error(e);\n  console.log(JSON.stringify({ error: e.message }));\n  process.exit(1);\n});\nSCRIPT_EOF\necho 'Flow script created'"
+      },
+      "id": "flow-script-creator",
+      "name": "スクリプト作成",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [
+        -448,
+        368
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_SPREADSHEET_ID_HERE",
+          "cachedResultUrl": "",
+          "cachedResultName": "動画プロンプトマスター"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultUrl": "",
+          "cachedResultName": "プロンプト一覧"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "pending"
+            }
+          ]
+        },
+        "options": {
+          "returnFirstMatch": true
+        }
+      },
+      "id": "flow-sheet-read",
+      "name": "動画プロンプト読込",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [
+        -256,
+        368
+      ],
+      "executeOnce": true,
+      "typeVersion": 4.7,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// スプレッドシートから読み込んだデータを整形\nconst data = $json;\n\nconst config = {\n  prompt: data.prompt || '',\n  model: data.model || 'fast',\n  projectUrl: data.project_url || null,\n  waitTimeout: parseInt(data.wait_timeout) || 600000,\n  rowId: data.row_number || data.ID || null\n};\n\nif (!config.prompt) {\n  throw new Error('Prompt is required');\n}\n\nreturn { json: config };"
+      },
+      "id": "flow-build-config",
+      "name": "設定準備",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        -64,
+        368
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "command": "=node /home/node/scripts/flow-video-auto.js '{{ JSON.stringify($json) }}' 2>&1",
+        "timeout": 900
+      },
+      "id": "flow-exec",
+      "name": "Flow実行",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [
+        128,
+        368
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $json.stdout || '';\nconst lines = stdout.split('\\n');\nlet result = {};\n\nfor (const line of lines) {\n  if (line.startsWith('{') && (line.includes('success') || line.includes('error'))) {\n    try {\n      result = JSON.parse(line);\n      break;\n    } catch (e) {}\n  }\n}\n\nif (Object.keys(result).length === 0) {\n  result = { error: 'Parse failed', raw: stdout.substring(0, 1000) };\n}\n\n// 元のデータを保持\nconst originalData = $items('設定準備', 0)[0]?.json || {};\nresult.rowId = originalData.rowId;\nresult.originalPrompt = originalData.prompt;\n\nreturn { json: result };"
+      },
+      "id": "flow-result-parse",
+      "name": "結果パース",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        320,
+        368
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.success }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "flow-success-check",
+      "name": "成功判定",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        512,
+        368
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_SPREADSHEET_ID_HERE",
+          "cachedResultUrl": "",
+          "cachedResultName": "動画プロンプトマスター"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultUrl": "",
+          "cachedResultName": "プロンプト一覧"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "completed",
+            "video_url": "={{ $json.videoUrl }}",
+            "project_url": "={{ $json.projectUrl }}",
+            "generation_time": "={{ $json.generationTime }}",
+            "completed_at": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "flow-update-success",
+      "name": "ステータス更新（成功）",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [
+        704,
+        268
+      ],
+      "typeVersion": 4.7,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "YOUR_SPREADSHEET_ID_HERE",
+          "cachedResultUrl": "",
+          "cachedResultName": "動画プロンプトマスター"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultUrl": "",
+          "cachedResultName": "プロンプト一覧"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "error",
+            "error_message": "={{ $json.error }}",
+            "failed_at": "={{ $now.toISO() }}"
+          }
+        },
+        "options": {}
+      },
+      "id": "flow-update-error",
+      "name": "ステータス更新（エラー）",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [
+        704,
+        468
+      ],
+      "typeVersion": 4.7,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "Google Sheets"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "スクリプト作成",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "スクリプト作成": {
+      "main": [
+        [
+          {
+            "node": "動画プロンプト読込",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "動画プロンプト読込": {
+      "main": [
+        [
+          {
+            "node": "設定準備",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "設定準備": {
+      "main": [
+        [
+          {
+            "node": "Flow実行",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Flow実行": {
+      "main": [
+        [
+          {
+            "node": "結果パース",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "結果パース": {
+      "main": [
+        [
+          {
+            "node": "成功判定",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "成功判定": {
+      "main": [
+        [
+          {
+            "node": "ステータス更新（成功）",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ステータス更新（エラー）",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "15c4c69b68a0d89ae26ebe1197eee8426ac5148f2255f927259d610172b7cbb4"
+  }
+}
