@@ -1,0 +1,274 @@
+{
+  "name": "Gemini 壁打ち自動化",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "id": "1aeb9be6-0c88-4849-b611-122e6f82711e",
+      "name": "Schedule Trigger4",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        -640,
+        368
+      ],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "command": "cat > /home/node/scripts/gemini-auto.js << 'SCRIPT_EOF'\nconst { chromium } = require('playwright');\nconst fs = require('fs');\nconst path = require('path');\n\nasync function run() {\n  const cookiePath = '/home/node/scripts/gemini-cookies.json';\n  const userDataDir = '/home/node/scripts/gemini-browser-profile';\n  \n  if (!fs.existsSync(cookiePath)) {\n    console.log(JSON.stringify({ error: 'Cookie file not found' }));\n    process.exit(1);\n  }\n\n  const inputArg = process.argv[2];\n  let prompts = [];\n  if (inputArg) {\n    try {\n      const parsed = JSON.parse(inputArg);\n      prompts = parsed.prompts || [];\n    } catch (e) {\n      console.log(JSON.stringify({ error: 'Invalid JSON' }));\n      process.exit(1);\n    }\n  }\n\n  // プロファイルディレクトリ作成\n  if (!fs.existsSync(userDataDir)) {\n    fs.mkdirSync(userDataDir, { recursive: true });\n  }\n\n  const cookies = JSON.parse(fs.readFileSync(cookiePath, 'utf-8'));\n  console.error('Loaded ' + cookies.length + ' cookies');\n\n  // 永続的なブラウザコンテキストを使用\n  const context = await chromium.launchPersistentContext(userDataDir, {\n    headless: true,\n    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--disable-blink-features=AutomationControlled'],\n    ignoreDefaultArgs: ['--enable-automation']\n  });\n\n  // Cookieを設定\n  await context.addCookies(cookies);\n  \n  const page = context.pages()[0] || await context.newPage();\n\n  console.error('Going to Gemini...');\n  await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 60000 });\n  await page.waitForTimeout(5000);\n\n  const url = page.url();\n  console.error('URL: ' + url);\n\n  const loggedIn = !url.includes('accounts.google.com') && !url.includes('signin');\n  console.error('Logged in: ' + loggedIn);\n\n  if (!loggedIn) {\n    await context.close();\n    console.log(JSON.stringify({ error: 'Not logged in' }));\n    process.exit(1);\n  }\n\n  const results = {};\n\n  for (const p of prompts) {\n    console.error('--- Prompt ' + p.index + ' ---');\n    try {\n      await page.waitForSelector('div[role=\"textbox\"]', { timeout: 15000 });\n      await page.click('div[role=\"textbox\"]');\n      await page.waitForTimeout(500);\n      \n      await page.fill('div[role=\"textbox\"]', p.text);\n      await page.waitForTimeout(1000);\n      \n      const sendBtn = page.locator('button[aria-label=\"送信\"], button[aria-label=\"Send message\"]');\n      if (await sendBtn.count() > 0) {\n        await sendBtn.first().click();\n      } else {\n        await page.keyboard.press('Enter');\n      }\n      \n      await page.waitForTimeout(30000);\n      \n      const responses = await page.locator('.markdown').all();\n      let text = '';\n      if (responses.length > 0) {\n        text = await responses[responses.length - 1].innerText();\n      }\n      results['result_p' + p.index] = text || '(No response)';\n      console.error('Got response for prompt ' + p.index);\n    } catch (e) {\n      console.error('Error: ' + e.message);\n      results['result_p' + p.index] = '(Error: ' + e.message + ')';\n    }\n    await page.waitForTimeout(3000);\n  }\n\n  await page.screenshot({ path: '/home/node/scripts/gemini-auto-result.png' });\n  console.error('Screenshot saved');\n  await context.close();\n  console.log(JSON.stringify(results));\n}\n\nrun().catch(e => {\n  console.error(e);\n  console.log(JSON.stringify({ error: e.message }));\n  process.exit(1);\n});\nSCRIPT_EOF\necho 'Script created'"
+      },
+      "id": "script-creator-001",
+      "name": "スクリプト作成",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [
+        -448,
+        368
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "1kTsLwBHrSz1b2XqcZ7wjyboooTjgXP12IXerJrHY0Hc",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1kTsLwBHrSz1b2XqcZ7wjyboooTjgXP12IXerJrHY0Hc/edit?usp=drivesdk",
+          "cachedResultName": "n8n アカウントマスター"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1kTsLwBHrSz1b2XqcZ7wjyboooTjgXP12IXerJrHY0Hc/edit#gid=0",
+          "cachedResultName": "Profile"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "ID",
+              "lookupValue": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "24d7598c-90ae-4ab8-a9fe-35eab0db079a",
+      "name": "ブログデータ　読込",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [
+        -96,
+        368
+      ],
+      "executeOnce": true,
+      "typeVersion": 4.7,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit?usp=drivesdk",
+          "cachedResultName": "n8n Noteブログ自動化マスター"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": 134870923,
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit#gid=134870923",
+          "cachedResultName": "キーワードリスト"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "Done_Database"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1ab8e1bc-b087-4bd7-822d-7aa7b5db0318",
+      "name": "Done_Database 読込",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [
+        80,
+        368
+      ],
+      "executeOnce": true,
+      "typeVersion": 4.7,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit?usp=drivesdk",
+          "cachedResultName": "n8n Noteブログ自動化マスター"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit#gid=0",
+          "cachedResultName": "記事プロンプト"
+        },
+        "options": {}
+      },
+      "id": "d912612e-552e-4d4e-b9a6-216f9c71d159",
+      "name": "記事プロンプト読込",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [
+        256,
+        368
+      ],
+      "typeVersion": 4.7,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const s2 = $json;\nconst s3List = $items('Done_Database 読込', 0) || [];\nconst s3 = s3List[0]?.json || {};\nconst blogDataList = $items('ブログデータ　読込', 0) || [];\nconst blogData = blogDataList[0]?.json || {};\nconst kwText = Array.isArray(s3.keyword_list) ? s3.keyword_list.filter(Boolean).join('、') : (s3.keyword_list || '');\nconst p1 = (s2.Prompt1 || '') + '\\n\\n【テキスト】\\n' + (s3.text_data || '');\nconst p2 = (s2.Prompt2 || '').split('{メインキーワード}').join(s3.main_keyword || '').split('{キーワード郡}').join(kwText);\nconst p3 = (s2.Prompt3 || '').split('{メインキーワード}').join(s3.main_keyword || '').split('{キーワード郡}').join(kwText).split('{blog_author}').join(blogData.blog_author || '').split('{blog_title}').join(blogData.blog_title || '').split('{blog_url}').join(blogData.blog_url || '').split('{blog_tone}').join(blogData.blog_tone || '');\nconst p4 = s2.Prompt4 || '';\nconst p5 = s2.Prompt5 || '';\nconst p6 = (s2.Prompt6 || '').split('{メインキーワード}').join(s3.main_keyword || '');\nconst p7 = s2.Prompt7 || '';\nconst promptObjects = [p1, p2, p3, p4, p5, p6, p7].map((text, i) => ({ text: text, index: i + 1 }));\nreturn { json: { prompts: promptObjects } };"
+      },
+      "id": "33918586-6d8e-496a-89a8-702afcd58d46",
+      "name": "Build Prompts (Code)",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        432,
+        368
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "command": "=node /home/node/scripts/gemini-auto.js '{{ JSON.stringify($json) }}' 2>&1"
+      },
+      "id": "gemini-exec-001",
+      "name": "Gemini実行",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [
+        608,
+        368
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "jsCode": "const stdout = $json.stdout || '';\nconst lines = stdout.split('\\n');\nlet result = {};\nfor (const line of lines) {\n  if (line.startsWith('{') && line.includes('result_p')) {\n    try {\n      result = JSON.parse(line);\n      break;\n    } catch (e) {}\n  }\n}\nif (Object.keys(result).length === 0) {\n  result = { error: 'Parse failed', raw: stdout };\n}\nreturn { json: result };"
+      },
+      "id": "result-parse-001",
+      "name": "結果パース",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        784,
+        368
+      ],
+      "typeVersion": 2
+    }
+  ],
+  "connections": {
+    "Schedule Trigger4": {
+      "main": [
+        [
+          {
+            "node": "スクリプト作成",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "スクリプト作成": {
+      "main": [
+        [
+          {
+            "node": "ブログデータ　読込",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ブログデータ　読込": {
+      "main": [
+        [
+          {
+            "node": "Done_Database 読込",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Done_Database 読込": {
+      "main": [
+        [
+          {
+            "node": "記事プロンプト読込",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "記事プロンプト読込": {
+      "main": [
+        [
+          {
+            "node": "Build Prompts (Code)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompts (Code)": {
+      "main": [
+        [
+          {
+            "node": "Gemini実行",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini実行": {
+      "main": [
+        [
+          {
+            "node": "結果パース",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "15c4c69b68a0d89ae26ebe1197eee8426ac5148f2255f927259d610172b7cbb4"
+  }
+}
