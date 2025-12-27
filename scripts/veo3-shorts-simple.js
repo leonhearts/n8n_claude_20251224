@@ -1,13 +1,15 @@
 /**
- * Veo3 ショート動画生成（シンプル版）
+ * Veo3 ショート動画生成（フレームから動画対応版）
  *
- * 既存のSUNOワークフローに組み込むための最小限のスクリプト
- * ジャケット画像から2つの動画を生成し、結合して出力
+ * SUNOワークフロー統合用
+ * ジャケット画像から2つの動画を生成（1回目:アップロード、2回目:シーン拡張）
  *
  * 使用方法:
  * node veo3-shorts-simple.js '{"prompt": "プロンプト", "imagePath": "/tmp/output_kaeuta.png"}'
  *
- * 出力: /tmp/veo3_shorts_kaeuta.mp4
+ * モード:
+ * - "frame": フレームから動画（画像参照、デフォルト）
+ * - "text": テキストから動画
  */
 
 const { chromium } = require('playwright');
@@ -22,13 +24,15 @@ const DEFAULT_CONFIG = {
   prompt: '',
   imagePath: '/tmp/output_kaeuta.png',
   outputPath: '/tmp/veo3_shorts_kaeuta.mp4',
-  mode: 'image', // 'image' または 'text'
+  mode: 'frame', // 'frame' または 'text'
   videoCount: 2,
   waitTimeout: 600000,
+  screenshotDir: '/tmp',
 };
 
-// セレクタ
+// セレクタ定義（実際のHTMLに基づく）
 const SELECTORS = {
+  // 共通
   promptInput: '#PINHOLE_TEXT_AREA_ELEMENT_ID',
   createButton: [
     'button[aria-label="作成"]',
@@ -39,9 +43,37 @@ const SELECTORS = {
     'button:has-text("新しいプロジェクト")',
     'button:has(i:text("add_2"))',
   ],
+
+  // モード選択
   modeSelector: 'button[role="combobox"]',
+  frameToVideoOption: 'text=フレームから動画',
+  textToVideoOption: 'text=テキストから動画',
   imageToVideoOption: 'text=画像から動画',
+
+  // フレームから動画用
+  addImageButton: 'button:has(i.google-symbols:text("add"))',
+  uploadButton: [
+    'button:has(i:text("upload"))',
+    'button:has-text("アップロード")',
+  ],
   fileInput: 'input[type="file"]',
+  cropAndSaveButton: [
+    'button:has-text("切り抜きして保存")',
+    'button:has(i:text("crop"))',
+  ],
+
+  // シーン拡張用（2回目以降）
+  addClipButton: '#PINHOLE_ADD_CLIP_CARD_ID',
+  extendMenuItem: [
+    'div[role="menuitem"]:has-text("拡張")',
+    'div[role="menuitem"]:has(i:text("logout"))',
+  ],
+
+  // ダウンロード
+  downloadButton: 'button:has(i:text("download"))',
+
+  // 通知
+  notificationItem: '[data-radix-collection-item]',
 };
 
 /**
@@ -78,7 +110,7 @@ async function downloadVideo(url, outputPath) {
  */
 async function dismissNotifications(page) {
   try {
-    const items = await page.$$('[data-radix-collection-item]');
+    const items = await page.$$(SELECTORS.notificationItem);
     for (const item of items) {
       const box = await item.boundingBox();
       if (box) {
@@ -95,13 +127,21 @@ async function dismissNotifications(page) {
 /**
  * 要素を探す
  */
-async function findElement(page, selectors) {
+async function findElement(page, selectors, timeout = 5000) {
   const list = Array.isArray(selectors) ? selectors : [selectors];
-  for (const sel of list) {
-    try {
-      const el = await page.$(sel);
-      if (el && await el.isVisible()) return el;
-    } catch (e) {}
+  const startTime = Date.now();
+
+  while (Date.now() - startTime < timeout) {
+    for (const sel of list) {
+      try {
+        const el = await page.$(sel);
+        if (el && await el.isVisible()) {
+          console.error('  Found: ' + sel);
+          return el;
+        }
+      } catch (e) {}
+    }
+    await page.waitForTimeout(500);
   }
   return null;
 }
@@ -110,67 +150,137 @@ async function findElement(page, selectors) {
  * 新しいプロジェクトを開始
  */
 async function startNewProject(page) {
+  console.error('\n--- Starting new project ---');
   await page.goto('https://labs.google/fx/tools/flow', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(5000);
 
-  // ログインチェック
   if (page.url().includes('accounts.google.com')) {
-    throw new Error('Not logged in');
+    throw new Error('Not logged in to Google');
   }
 
   await dismissNotifications(page);
 
-  // 新しいプロジェクトボタンをクリック
   const newBtn = await findElement(page, SELECTORS.newProjectButton);
   if (newBtn) {
     await newBtn.click();
     await page.waitForTimeout(5000);
+    console.error('New project created');
   }
 }
 
 /**
- * Image-to-Videoモードを選択
+ * フレームから動画モードを選択して画像をアップロード
  */
-async function selectImageToVideoMode(page, imagePath) {
-  console.error('Selecting Image-to-Video mode...');
+async function selectFrameToVideoMode(page, imagePath, config) {
+  console.error('\n--- Selecting Frame-to-Video mode ---');
 
-  // モードセレクタをクリック
+  // 1. モードセレクタをクリック
   const modeBtn = await findElement(page, SELECTORS.modeSelector);
   if (modeBtn) {
     await modeBtn.click();
     await page.waitForTimeout(1000);
 
-    // 「画像から動画」を選択
-    const i2vOption = await page.$('text=画像から動画');
-    if (i2vOption) {
-      await i2vOption.click();
+    // 2. 「フレームから動画」を選択
+    const frameOption = await page.$('text=フレームから動画');
+    if (frameOption) {
+      await frameOption.click();
+      console.error('Selected: フレームから動画');
       await page.waitForTimeout(1500);
+    } else {
+      console.error('Warning: フレームから動画 option not found, trying alternatives...');
+      // 画像から動画を試す
+      const imgOption = await page.$('text=画像から動画');
+      if (imgOption) {
+        await imgOption.click();
+        await page.waitForTimeout(1500);
+      }
     }
   }
 
-  // 画像をアップロード
+  // 3. 画像追加「+」ボタンをクリック
+  console.error('Looking for add image button...');
+  const addBtn = await findElement(page, SELECTORS.addImageButton, 10000);
+  if (addBtn) {
+    await addBtn.click();
+    console.error('Clicked add image button');
+    await page.waitForTimeout(2000);
+  } else {
+    console.error('Warning: Add image button not found');
+  }
+
+  // 4. 「アップロード」ボタンをクリック
+  console.error('Looking for upload button...');
+  const uploadBtn = await findElement(page, SELECTORS.uploadButton, 10000);
+  if (uploadBtn) {
+    await uploadBtn.click();
+    console.error('Clicked upload button');
+    await page.waitForTimeout(1500);
+  }
+
+  // 5. ファイル選択（input[type="file"]にファイルをセット）
+  console.error('Setting file input...');
   const fileInput = await page.$(SELECTORS.fileInput);
   if (fileInput && fs.existsSync(imagePath)) {
     await fileInput.setInputFiles(imagePath);
-    console.error('Image uploaded: ' + imagePath);
+    console.error('File uploaded: ' + imagePath);
     await page.waitForTimeout(3000);
+  } else {
+    console.error('Warning: File input not found or image does not exist');
+    // スクリーンショットを保存
+    await page.screenshot({ path: path.join(config.screenshotDir, 'veo3-upload-error.png') });
   }
+
+  // 6. 「切り抜きして保存」ボタンをクリック
+  console.error('Looking for crop and save button...');
+  const cropBtn = await findElement(page, SELECTORS.cropAndSaveButton, 10000);
+  if (cropBtn) {
+    await cropBtn.click();
+    console.error('Clicked crop and save');
+    await page.waitForTimeout(3000);
+  } else {
+    console.error('Warning: Crop button not found, may already be processed');
+  }
+
+  console.error('Frame-to-Video mode setup complete');
 }
 
 /**
- * 単一の動画を生成
+ * シーン拡張（2回目以降の動画生成）
  */
-async function generateVideo(page, config, index) {
-  console.error(`\n=== Generating Video ${index} ===`);
+async function extendScene(page) {
+  console.error('\n--- Extending scene ---');
 
-  // Image-to-Videoモードの場合
-  if (config.mode === 'image' && config.imagePath) {
-    await selectImageToVideoMode(page, config.imagePath);
+  // 1. シーン拡張「+」ボタンをクリック
+  const addClipBtn = await findElement(page, SELECTORS.addClipButton, 10000);
+  if (!addClipBtn) {
+    throw new Error('Add clip button not found');
   }
+  await addClipBtn.click();
+  console.error('Clicked add clip button');
+  await page.waitForTimeout(1500);
+
+  // 2. 「拡張…」メニューを選択
+  const extendItem = await findElement(page, SELECTORS.extendMenuItem, 5000);
+  if (!extendItem) {
+    throw new Error('Extend menu item not found');
+  }
+  await extendItem.click();
+  console.error('Selected extend option');
+  await page.waitForTimeout(2000);
+}
+
+/**
+ * 動画生成を実行して完了を待つ
+ */
+async function generateAndWait(page, config, videoIndex) {
+  console.error(`\n=== Generating Video ${videoIndex} ===`);
 
   // プロンプト入力
-  const promptInput = await page.waitForSelector(SELECTORS.promptInput, { timeout: 10000 });
-  if (!promptInput) throw new Error('Prompt input not found');
+  console.error('Entering prompt...');
+  const promptInput = await page.waitForSelector(SELECTORS.promptInput, { timeout: 15000 });
+  if (!promptInput) {
+    throw new Error('Prompt input not found');
+  }
 
   await promptInput.click();
   await promptInput.fill('');
@@ -179,19 +289,25 @@ async function generateVideo(page, config, index) {
   await page.waitForTimeout(1000);
 
   // 作成ボタンをクリック
-  let createBtn = await findElement(page, SELECTORS.createButton);
-  if (!createBtn) throw new Error('Create button not found');
+  console.error('Looking for create button...');
+  const createBtn = await findElement(page, SELECTORS.createButton, 10000);
+  if (!createBtn) {
+    throw new Error('Create button not found');
+  }
 
   // ボタンが有効になるまで待機
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 30; i++) {
     const disabled = await createBtn.getAttribute('disabled');
     if (disabled === null) break;
     await page.waitForTimeout(500);
   }
 
   await createBtn.click();
-  console.error('Generation started...');
+  console.error('Generation started');
   await page.waitForTimeout(5000);
+
+  // スクリーンショット
+  await page.screenshot({ path: path.join(config.screenshotDir, `veo3-generating-${videoIndex}.png`) });
 
   // 動画生成完了を待つ
   const startTime = Date.now();
@@ -199,25 +315,32 @@ async function generateVideo(page, config, index) {
 
   while (Date.now() - startTime < config.waitTimeout) {
     await page.waitForTimeout(10000);
-    console.error(`  ${Math.round((Date.now() - startTime) / 1000)}s elapsed`);
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    console.error(`  ${elapsed}s elapsed...`);
 
     await dismissNotifications(page);
 
-    const video = await page.$(SELECTORS.videoElement);
-    if (video) {
+    // 動画要素を探す
+    const videos = await page.$$(SELECTORS.videoElement);
+    for (const video of videos) {
       const src = await video.getAttribute('src');
       if (src && src.startsWith('http')) {
         videoUrl = src;
-        console.error(`Video ${index} ready!`);
+        console.error(`Video ${videoIndex} ready!`);
         break;
       }
     }
+
+    if (videoUrl) break;
   }
 
-  if (!videoUrl) throw new Error(`Video ${index} generation timeout`);
+  if (!videoUrl) {
+    await page.screenshot({ path: path.join(config.screenshotDir, `veo3-timeout-${videoIndex}.png`) });
+    throw new Error(`Video ${videoIndex} generation timeout`);
+  }
 
   // ダウンロード
-  const tempPath = `/tmp/veo3_temp_${index}.mp4`;
+  const tempPath = `/tmp/veo3_temp_${videoIndex}.mp4`;
   await downloadVideo(videoUrl, tempPath);
 
   return {
@@ -238,19 +361,25 @@ async function main() {
     try {
       config = { ...config, ...JSON.parse(input) };
     } catch (e) {
-      console.log(JSON.stringify({ error: 'Invalid JSON' }));
+      console.log(JSON.stringify({ error: 'Invalid JSON input' }));
       process.exit(1);
     }
   }
 
   if (!config.prompt) {
-    console.log(JSON.stringify({ error: 'Prompt required' }));
+    console.log(JSON.stringify({ error: 'Prompt is required' }));
     process.exit(1);
+  }
+
+  // スクリーンショットディレクトリ確認
+  if (!fs.existsSync(config.screenshotDir)) {
+    fs.mkdirSync(config.screenshotDir, { recursive: true });
   }
 
   console.error('=== Veo3 Shorts Generation ===');
   console.error('Mode: ' + config.mode);
   console.error('Image: ' + config.imagePath);
+  console.error('Video count: ' + config.videoCount);
   console.error('Prompt: ' + config.prompt.substring(0, 50) + '...');
 
   let browser, page;
@@ -261,60 +390,99 @@ async function main() {
     const context = browser.contexts()[0];
     page = await context.newPage();
 
-    // 動画を生成
-    for (let i = 1; i <= config.videoCount; i++) {
-      await startNewProject(page);
-      const result = await generateVideo(page, config, i);
-      videos.push(result);
+    // 新しいプロジェクト開始
+    await startNewProject(page);
+
+    // モードに応じた処理
+    if (config.mode === 'frame' && config.imagePath) {
+      // フレームから動画モード
+
+      // 1回目: 画像アップロード + 生成
+      await selectFrameToVideoMode(page, config.imagePath, config);
+      const video1 = await generateAndWait(page, config, 1);
+      videos.push(video1);
+
+      // 2回目以降: シーン拡張
+      for (let i = 2; i <= config.videoCount; i++) {
+        await extendScene(page);
+        const video = await generateAndWait(page, config, i);
+        videos.push(video);
+      }
+
+    } else {
+      // テキストから動画モード
+      for (let i = 1; i <= config.videoCount; i++) {
+        if (i > 1) {
+          await startNewProject(page);
+        }
+        const video = await generateAndWait(page, config, i);
+        videos.push(video);
+      }
     }
 
+    // 最終スクリーンショット
+    await page.screenshot({ path: path.join(config.screenshotDir, 'veo3-complete.png') });
     await page.close();
 
     // 動画を結合（音声なし）
     if (videos.length >= 2) {
-      console.error('\nConcatenating videos...');
+      console.error('\n--- Concatenating videos ---');
 
       const listFile = '/tmp/veo3_concat_list.txt';
       const listContent = videos.map(v => `file '${v.path}'`).join('\n');
       fs.writeFileSync(listFile, listContent);
 
-      // 結合（音声なし）
       try {
         execSync(`ffmpeg -y -f concat -safe 0 -i "${listFile}" -c copy -an "${config.outputPath}"`, { stdio: 'pipe' });
       } catch (e) {
-        // 再エンコード
+        // コーデックが異なる場合は再エンコード
+        console.error('Re-encoding with libx264...');
         execSync(`ffmpeg -y -f concat -safe 0 -i "${listFile}" -c:v libx264 -an "${config.outputPath}"`, { stdio: 'pipe' });
       }
 
       fs.unlinkSync(listFile);
-      console.error('Output: ' + config.outputPath);
 
       // 一時ファイル削除
       videos.forEach(v => {
         try { fs.unlinkSync(v.path); } catch (e) {}
       });
+
+      console.error('Output: ' + config.outputPath);
+
     } else if (videos.length === 1) {
-      // 1つだけの場合はコピー
       execSync(`ffmpeg -y -i "${videos[0].path}" -an -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
+      try { fs.unlinkSync(videos[0].path); } catch (e) {}
     }
 
-    console.log(JSON.stringify({
+    // 結果出力
+    const result = {
       success: true,
       outputPath: config.outputPath,
       videoCount: videos.length,
+      videos: videos.map((v, i) => ({
+        index: i + 1,
+        generationTime: v.time + 's'
+      })),
       totalTime: videos.reduce((sum, v) => sum + v.time, 0) + 's'
-    }));
+    };
+
+    console.log(JSON.stringify(result));
     process.exit(0);
 
   } catch (e) {
     console.error('Error: ' + e.message);
+
     if (page) {
       try {
-        await page.screenshot({ path: '/tmp/veo3-error.png' });
+        await page.screenshot({ path: path.join(config.screenshotDir, 'veo3-error.png') });
         await page.close();
       } catch (se) {}
     }
-    console.log(JSON.stringify({ error: e.message }));
+
+    console.log(JSON.stringify({
+      error: e.message,
+      generatedVideos: videos.length
+    }));
     process.exit(1);
   }
 }

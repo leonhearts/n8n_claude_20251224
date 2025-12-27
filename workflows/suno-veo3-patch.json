@@ -6,7 +6,7 @@
     {
       "_comment": "ショート音声切出の後に追加",
       "parameters": {
-        "command": "=node /home/node/veo3-shorts-simple.js '{{ JSON.stringify({ prompt: $('プロンプト生成 ✔').item.json.output.header_short + \" \" + $('プロンプト生成 ✔').item.json.output.footer_short, imagePath: \"/tmp/output_kaeuta.png\", outputPath: \"/tmp/veo3_shorts_kaeuta.mp4\", mode: \"image\", videoCount: 2 }) }}'",
+        "command": "=node /home/node/veo3-shorts-simple.js '{{ JSON.stringify({ prompt: $('プロンプト生成 ✔').item.json.output.header_short + \" \" + $('プロンプト生成 ✔').item.json.output.footer_short, imagePath: \"/tmp/output_kaeuta.png\", outputPath: \"/tmp/veo3_shorts_kaeuta.mp4\", mode: \"frame\", videoCount: 2 }) }}'",
         "options": {
           "timeout": 1800000
         }

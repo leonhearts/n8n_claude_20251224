@@ -13,8 +13,31 @@
 
 **変更後:**
 ```
-ショート音声切出 → Veo3動画生成 → Veo3結果パース → ショート動画生成3（Veo3動画+FFmpeg）
+ショート音声切出 → Veo3動画生成 → ショート動画生成3（Veo3動画+FFmpeg）
 ```
+
+## Veo3 動画生成フロー
+
+### mode: "frame"（フレームから動画）
+
+**1回目（画像アップロード+生成）:**
+1. 「フレームから動画」モードを選択
+2. 「+」ボタンで画像追加エリアを開く
+3. 「アップロード」ボタンをクリック
+4. ファイル選択（input[type="file"]）
+5. 「切り抜きして保存」ボタン
+6. プロンプト入力
+7. 送信ボタン → 動画生成待機
+
+**2回目以降（シーン拡張）:**
+1. `#PINHOLE_ADD_CLIP_CARD_ID`（シーン追加+ボタン）をクリック
+2. 「拡張…」メニューを選択
+3. プロンプト入力
+4. 送信ボタン → 動画生成待機
+
+### mode: "text"（テキストから動画）
+
+毎回新しいプロジェクトを作成してテキストのみで生成。
 
 ## ファイル構成
 
@@ -35,7 +58,26 @@ docker cp C:\script_all\n8n_claude_20251224\scripts\veo3-shorts-simple.js n8n-n8
 docker exec -u root n8n-n8n-1 chown node:node /home/node/veo3-shorts-simple.js
 ```
 
-### 2. 既存ワークフローに追加するノード
+### 2. 使用方法
+
+```bash
+# フレームから動画（デフォルト）
+node /home/node/veo3-shorts-simple.js '{
+  "prompt": "ゆっくりとした動き",
+  "imagePath": "/tmp/output_kaeuta.png",
+  "mode": "frame",
+  "videoCount": 2
+}'
+
+# テキストから動画
+node /home/node/veo3-shorts-simple.js '{
+  "prompt": "美しい風景",
+  "mode": "text",
+  "videoCount": 2
+}'
+```
+
+### 3. n8n ワークフローへの追加
 
 #### ノード1: Veo3動画生成
 - **タイプ:** Execute Command
@@ -46,30 +88,13 @@ node /home/node/veo3-shorts-simple.js '{{ JSON.stringify({
   prompt: $('プロンプト生成 ✔').item.json.output.header_short + " " + $('プロンプト生成 ✔').item.json.output.footer_short,
   imagePath: "/tmp/output_kaeuta.png",
   outputPath: "/tmp/veo3_shorts_kaeuta.mp4",
-  mode: "image",
+  mode: "frame",
   videoCount: 2
 }) }}'
 ```
 - **タイムアウト:** 1800000ms（30分）
 
-#### ノード2: Veo3結果パース
-- **タイプ:** Code
-- **コード:**
-```javascript
-const output = $input.first().json.stdout;
-try {
-  const result = JSON.parse(output);
-  if (result.success) {
-    return [{ json: { veo3Path: result.outputPath, success: true } }];
-  } else {
-    throw new Error(result.error || 'Veo3 generation failed');
-  }
-} catch (e) {
-  return [{ json: { veo3Path: null, success: false, fallback: true } }];
-}
-```
-
-### 3. ショート動画生成3 の修正
+#### ノード2: ショート動画生成3の修正
 
 既存のFFmpegコマンドを、Veo3動画対応版に置き換え：
 
@@ -77,9 +102,9 @@ try {
 if [ -f "/tmp/veo3_shorts_kaeuta.mp4" ] && [ -s "/tmp/veo3_shorts_kaeuta.mp4" ]; then
   # Veo3動画を使用
   ffmpeg -y -i /tmp/veo3_shorts_kaeuta.mp4 -i /tmp/short_audio_kaeuta.mp3 \
-    -filter_complex "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1[bg];[bg]drawtext=...（テキストオーバーレイ）...[outv]" \
+    -filter_complex "[0:v]scale=1080:1920:...[outv]" \
     -map "[outv]" -map 1:a \
-    -c:v libx264 -c:a aac -b:a 192k -shortest -pix_fmt yuv420p -t 15 \
+    -c:v libx264 -c:a aac -shortest -t 15 \
     /tmp/output_short_kaeuta.mp4
 else
   # フォールバック: 従来の静止画モード
@@ -89,24 +114,42 @@ fi
 
 ## 動作フロー
 
-1. `ジャケット画像保存` で `/tmp/output_kaeuta.png` が保存される
-2. `ショート音声切出` で `/tmp/short_audio_kaeuta.mp3` が作成される
-3. `Veo3動画生成` がジャケット画像を使って2つの動画を生成・結合
-4. `ショート動画生成3` がVeo3動画にテキストとオーディオを追加
+```
+1. ジャケット画像保存 → /tmp/output_kaeuta.png
+2. ショート音声切出 → /tmp/short_audio_kaeuta.mp3
+3. Veo3動画生成:
+   a. フレームから動画モード選択
+   b. 画像アップロード → 切り抜き保存
+   c. プロンプト入力 → 1回目の動画生成
+   d. シーン拡張 → 2回目の動画生成
+   e. 2つの動画をFFmpegで結合
+   → /tmp/veo3_shorts_kaeuta.mp4
+4. ショート動画生成3:
+   - Veo3動画 + SUNO音声 + テキストオーバーレイ
+   → /tmp/output_short_kaeuta.mp4
+```
+
+## セレクタ一覧
+
+| 要素 | セレクタ |
+|------|----------|
+| モード選択 | `button[role="combobox"]` |
+| フレームから動画 | `text=フレームから動画` |
+| 画像追加+ | `button:has(i.google-symbols:text("add"))` |
+| アップロード | `button:has(i:text("upload"))` |
+| ファイル入力 | `input[type="file"]` |
+| 切り抜き保存 | `button:has-text("切り抜きして保存")` |
+| シーン追加+ | `#PINHOLE_ADD_CLIP_CARD_ID` |
+| 拡張メニュー | `div[role="menuitem"]:has-text("拡張")` |
+| プロンプト | `#PINHOLE_TEXT_AREA_ELEMENT_ID` |
+| 作成ボタン | `button:has(i:text("arrow_forward"))` |
 
 ## フォールバック
 
 Veo3生成が失敗した場合、自動的に従来の静止画モードにフォールバックします。
 
-## テスト
-
-```bash
-# スクリプト単体テスト
-docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{"prompt":"test animation","imagePath":"/tmp/output_kaeuta.png","videoCount":1}'
-```
-
 ## 注意事項
 
-- Veo3は1動画あたり約90秒かかるため、2動画で約3分の追加時間
-- 既存のワークフローの他の部分は一切変更不要
-- `mode: "text"` に変更すると、画像なしのText-to-Videoモードになる
+- Veo3は1動画あたり約90秒、2動画で約3分の追加時間
+- シーン拡張は同一プロジェクト内で行うため、一貫性のある動画になる
+- 既存のワークフローの他の部分は変更不要
