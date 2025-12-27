@@ -1,0 +1,206 @@
+{
+  "name": "Veo3 Shorts Generation",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "prompt",
+              "name": "prompt",
+              "type": "string",
+              "value": "A beautiful landscape with flowing water and gentle motion"
+            },
+            {
+              "id": "mode",
+              "name": "mode",
+              "type": "string",
+              "value": "text"
+            },
+            {
+              "id": "imagePath",
+              "name": "imagePath",
+              "type": "string",
+              "value": ""
+            },
+            {
+              "id": "audioPath",
+              "name": "audioPath",
+              "type": "string",
+              "value": ""
+            },
+            {
+              "id": "videoCount",
+              "name": "videoCount",
+              "type": "number",
+              "value": 2
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-params",
+      "name": "Set Parameters",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "command": "=node /home/node/flow-video-shorts.js '{{ JSON.stringify({ prompt: $json.prompt, mode: $json.mode, imagePath: $json.imagePath || null, audioPath: $json.audioPath || null, videoCount: $json.videoCount || 2, outputDir: \"/tmp/videos\" }) }}'",
+        "options": {
+          "timeout": 1800000
+        }
+      },
+      "id": "execute-shorts",
+      "name": "Generate Veo3 Shorts",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// スクリプトの出力をパース\nconst output = $input.first().json.stdout;\n\ntry {\n  const result = JSON.parse(output);\n  \n  if (result.success && result.finalVideoPath) {\n    return [{\n      json: {\n        success: true,\n        videoCount: result.videoCount,\n        finalVideoPath: result.finalVideoPath,\n        videos: result.videos,\n        totalGenerationTime: result.totalGenerationTime,\n        fileName: result.finalVideoPath.split('/').pop()\n      }\n    }];\n  } else if (result.error) {\n    throw new Error(result.error);\n  } else {\n    throw new Error('Video generation failed');\n  }\n} catch (e) {\n  throw new Error('Parse error: ' + e.message + ' | Raw: ' + output.substring(0, 300));\n}"
+      },
+      "id": "parse-result",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $json.finalVideoPath }}",
+        "options": {}
+      },
+      "id": "read-video",
+      "name": "Read Video File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "name": "={{ $('Parse Result').item.json.fileName }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "",
+          "mode": "list"
+        },
+        "options": {}
+      },
+      "id": "upload-drive",
+      "name": "Upload to Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1250, 300],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 最終結果をまとめる\nconst parseResult = $('Parse Result').first().json;\nconst driveResult = $input.first().json;\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Veo3 shorts video uploaded to Google Drive!',\n    videoCount: parseResult.videoCount,\n    totalGenerationTime: parseResult.totalGenerationTime,\n    driveFileId: driveResult.id,\n    driveFileName: driveResult.name,\n    driveWebViewLink: driveResult.webViewLink,\n    individualVideos: parseResult.videos\n  }\n}];"
+      },
+      "id": "final-result",
+      "name": "Final Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Parameters",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Parameters": {
+      "main": [
+        [
+          {
+            "node": "Generate Veo3 Shorts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Veo3 Shorts": {
+      "main": [
+        [
+          {
+            "node": "Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Result": {
+      "main": [
+        [
+          {
+            "node": "Read Video File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Video File": {
+      "main": [
+        [
+          {
+            "node": "Upload to Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Google Drive": {
+      "main": [
+        [
+          {
+            "node": "Final Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionTimeout": 1800,
+    "saveManualExecutions": true
+  },
+  "tags": [],
+  "pinData": {}
+}
