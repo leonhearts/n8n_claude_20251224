@@ -138,7 +138,8 @@ async function run() {
     model: 'fast', // 'fast' or 'quality'
     projectUrl: null, // 既存プロジェクトURL（オプション）
     waitTimeout: 600000, // 動画生成待機時間（デフォルト10分）
-    screenshotDir: '/home/node/scripts',
+    screenshotDir: '/tmp',
+    keepTabOpen: false, // タブを開いたままにするか
   };
 
   if (inputArg) {
@@ -431,7 +432,12 @@ async function run() {
     // プロジェクトURLを取得
     const projectUrl = page.url();
 
-    await page.close();
+    // タブを閉じるかどうか
+    if (!config.keepTabOpen) {
+      await page.close();
+    } else {
+      console.error('Tab kept open as requested');
+    }
 
     // 結果を出力
     const result = {
@@ -443,6 +449,7 @@ async function run() {
     };
 
     console.log(JSON.stringify(result));
+    process.exit(0);
 
   } catch (e) {
     console.error('Error: ' + e.message);
