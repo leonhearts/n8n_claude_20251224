@@ -22,7 +22,7 @@ const DEFAULT_CONFIG = {
   prompt: '',
   imagePath: '/tmp/output_kaeuta.png',
   outputPath: '/tmp/veo3_shorts_kaeuta.mp4',
-  mode: 'image', // 'image' または 'text'
+  mode: 'frame', // 'frame' または 'text'
   videoCount: 2,
   waitTimeout: 600000,
 };
@@ -39,9 +39,15 @@ const SELECTORS = {
     'button:has-text("新しいプロジェクト")',
     'button:has(i:text("add_2"))',
   ],
+
+  // フレームから動画モード用
   modeSelector: 'button[role="combobox"]',
-  imageToVideoOption: 'text=画像から動画',
+  frameToVideoOption: 'text=フレームから動画',
+  addImageButton: 'button:has(i.google-symbols:text("add"))',
+  uploadButton: 'button:has(i:text("upload"))',
   fileInput: 'input[type="file"]',
+  cropAndSaveButton: 'button:has-text("切り抜きして保存")',
+
   // シーン拡張用セレクタ
   addClipButton: '#PINHOLE_ADD_CLIP_CARD_ID',
   extendOption: '[role="menuitem"]:has-text("拡張")',
@@ -133,35 +139,61 @@ async function startNewProject(page) {
 }
 
 /**
- * Image-to-Videoモードを選択
+ * フレームから動画モードを選択して画像をアップロード
  */
-async function selectImageToVideoMode(page, imagePath) {
-  console.error('Selecting Image-to-Video mode...');
+async function selectFrameToVideoMode(page, imagePath) {
+  console.error('Selecting Frame-to-Video mode...');
 
   // オーバーレイを閉じるため少し待機
   await page.waitForTimeout(2000);
   await dismissNotifications(page);
 
-  // モードセレクタをクリック（force: trueでオーバーレイを無視）
+  // 1. モードセレクタ（テキストから動画）をクリック
   const modeBtn = await findElement(page, SELECTORS.modeSelector);
   if (modeBtn) {
     await modeBtn.click({ force: true });
+    console.error('Clicked mode selector');
     await page.waitForTimeout(1500);
 
-    // 「画像から動画」を選択
-    const i2vOption = await page.$('text=画像から動画');
-    if (i2vOption) {
-      await i2vOption.click({ force: true });
+    // 2. 「フレームから動画」を選択
+    const frameOption = await page.$(SELECTORS.frameToVideoOption);
+    if (frameOption) {
+      await frameOption.click({ force: true });
+      console.error('Selected Frame-to-Video');
       await page.waitForTimeout(2000);
     }
   }
 
-  // 画像をアップロード
+  // 3. 画像追加のプラスボタンをクリック
+  const addImgBtn = await page.$(SELECTORS.addImageButton);
+  if (addImgBtn) {
+    await addImgBtn.click({ force: true });
+    console.error('Clicked add image button');
+    await page.waitForTimeout(1500);
+  }
+
+  // 4. アップロードボタンをクリック
+  const uploadBtn = await page.$(SELECTORS.uploadButton);
+  if (uploadBtn) {
+    await uploadBtn.click({ force: true });
+    console.error('Clicked upload button');
+    await page.waitForTimeout(1000);
+  }
+
+  // 5. ファイルを選択
   const fileInput = await page.$(SELECTORS.fileInput);
   if (fileInput && fs.existsSync(imagePath)) {
     await fileInput.setInputFiles(imagePath);
     console.error('Image uploaded: ' + imagePath);
     await page.waitForTimeout(3000);
+  }
+
+  // 6. 「切り抜きして保存」ボタンをクリック
+  const cropBtn = await page.$(SELECTORS.cropAndSaveButton);
+  if (cropBtn) {
+    await cropBtn.click({ force: true });
+    console.error('Clicked crop and save');
+    await page.waitForTimeout(2000);
   }
 }
 
@@ -171,9 +203,9 @@ async function selectImageToVideoMode(page, imagePath) {
 async function generateVideo(page, config, index) {
   console.error(`\n=== Generating Video ${index} ===`);
 
-  // Image-to-Videoモードの場合
-  if (config.mode === 'image' && config.imagePath) {
-    await selectImageToVideoMode(page, config.imagePath);
+  // フレームから動画モードの場合
+  if (config.mode === 'frame' && config.imagePath) {
+    await selectFrameToVideoMode(page, config.imagePath);
   }
 
   // プロンプト入力
