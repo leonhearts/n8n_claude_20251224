@@ -246,27 +246,34 @@ async function run() {
       // 既に選択されている場合はクリック不要
     }
 
-    // モデル設定を確認・変更
+    // モデル設定を確認・変更（オプション - 失敗しても続行）
     console.error('Configuring model: ' + config.model);
-    const settingsBtn = await findElement(page, SELECTORS.settingsButton, 'Settings button');
+    try {
+      const settingsBtn = await findElement(page, SELECTORS.settingsButton, 'Settings button');
 
-    if (settingsBtn) {
-      await settingsBtn.click();
-      await page.waitForTimeout(1500);
+      if (settingsBtn) {
+        // force: true で無効状態でもクリックを試みる
+        await settingsBtn.click({ timeout: 5000 }).catch(() => {
+          console.error('Settings button click failed, using default settings');
+        });
+        await page.waitForTimeout(1500);
 
-      // モデル選択（Veo 3 - Fast または Veo 3 - Quality）
-      const modelText = config.model === 'quality' ? 'Quality' : 'Fast';
-      const modelOption = await page.$(`button:has-text("${modelText}"), [role="option"]:has-text("${modelText}")`);
+        // モデル選択（Veo 3 - Fast または Veo 3 - Quality）
+        const modelText = config.model === 'quality' ? 'Quality' : 'Fast';
+        const modelOption = await page.$(`button:has-text("${modelText}"), [role="option"]:has-text("${modelText}")`);
 
-      if (modelOption) {
-        await modelOption.click();
-        console.error('Selected model: ' + modelText);
+        if (modelOption) {
+          await modelOption.click();
+          console.error('Selected model: ' + modelText);
+          await page.waitForTimeout(500);
+        }
+
+        // 設定ダイアログを閉じる
+        await page.keyboard.press('Escape');
         await page.waitForTimeout(500);
       }
-
-      // 設定ダイアログを閉じる
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(500);
+    } catch (e) {
+      console.error('Model configuration skipped: ' + e.message);
     }
 
     // プロンプト入力欄を探す
