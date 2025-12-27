@@ -208,17 +208,9 @@ async function selectFrameToVideoMode(page, imagePath, config) {
     console.error('Warning: Add image button not found');
   }
 
-  // 4. 「アップロード」ボタンをクリック
-  console.error('Looking for upload button...');
-  const uploadBtn = await findElement(page, SELECTORS.uploadButton, 10000);
-  if (uploadBtn) {
-    await uploadBtn.click();
-    console.error('Clicked upload button');
-    await page.waitForTimeout(1500);
-  }
-
-  // 5. ファイル選択（input[type="file"]にファイルをセット）
-  console.error('Setting file input...');
+  // 4. ファイル選択（input[type="file"]に直接セット - アップロードボタンはスキップ）
+  // ※アップロードボタンをクリックするとWindowsダイアログが開いて閉じないため
+  console.error('Setting file input directly (skipping upload button)...');
   const fileInput = await page.$(SELECTORS.fileInput);
   if (fileInput && fs.existsSync(imagePath)) {
     await fileInput.setInputFiles(imagePath);
@@ -226,7 +218,6 @@ async function selectFrameToVideoMode(page, imagePath, config) {
     await page.waitForTimeout(3000);
   } else {
     console.error('Warning: File input not found or image does not exist');
-    // スクリーンショットを保存
     await page.screenshot({ path: path.join(config.screenshotDir, 'veo3-upload-error.png') });
   }
 
