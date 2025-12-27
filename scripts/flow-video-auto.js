@@ -20,6 +20,57 @@
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
+const https = require('https');
+const http = require('http');
+
+/**
+ * URLから動画をダウンロード
+ */
+async function downloadVideo(url, outputPath) {
+  return new Promise((resolve, reject) => {
+    const protocol = url.startsWith('https') ? https : http;
+    const file = fs.createWriteStream(outputPath);
+
+    console.error('Downloading video to: ' + outputPath);
+
+    protocol.get(url, (response) => {
+      // リダイレクト対応
+      if (response.statusCode === 301 || response.statusCode === 302) {
+        const redirectUrl = response.headers.location;
+        console.error('Redirecting to: ' + redirectUrl);
+        downloadVideo(redirectUrl, outputPath).then(resolve).catch(reject);
+        return;
+      }
+
+      if (response.statusCode !== 200) {
+        reject(new Error('Download failed with status: ' + response.statusCode));
+        return;
+      }
+
+      const totalBytes = parseInt(response.headers['content-length'], 10);
+      let downloadedBytes = 0;
+
+      response.on('data', (chunk) => {
+        downloadedBytes += chunk.length;
+        if (totalBytes) {
+          const percent = Math.round((downloadedBytes / totalBytes) * 100);
+          process.stderr.write(`\rDownload progress: ${percent}%`);
+        }
+      });
+
+      response.pipe(file);
+
+      file.on('finish', () => {
+        file.close();
+        console.error('\nDownload complete: ' + outputPath);
+        resolve(outputPath);
+      });
+    }).on('error', (err) => {
+      fs.unlink(outputPath, () => {}); // 失敗したファイルを削除
+      reject(err);
+    });
+  });
+}
 
 // セレクタ定義（実際のHTMLに基づく）
 const SELECTORS = {
@@ -140,6 +191,9 @@ async function run() {
     waitTimeout: 600000, // 動画生成待機時間（デフォルト10分）
     screenshotDir: '/tmp',
     keepTabOpen: false, // タブを開いたままにするか
+    downloadVideo: true, // 動画をダウンロードするか
+    outputDir: '/tmp', // 動画の保存先
+    outputFilename: null, // ファイル名（nullの場合は自動生成）
   };
 
   if (inputArg) {
@@ -246,27 +300,34 @@ async function run() {
       // 既に選択されている場合はクリック不要
     }
 
-    // モデル設定を確認・変更
+    // モデル設定を確認・変更（オプション - 失敗しても続行）
     console.error('Configuring model: ' + config.model);
-    const settingsBtn = await findElement(page, SELECTORS.settingsButton, 'Settings button');
+    try {
+      const settingsBtn = await findElement(page, SELECTORS.settingsButton, 'Settings button');
 
-    if (settingsBtn) {
-      await settingsBtn.click();
-      await page.waitForTimeout(1500);
+      if (settingsBtn) {
+        // force: true で無効状態でもクリックを試みる
+        await settingsBtn.click({ timeout: 5000 }).catch(() => {
+          console.error('Settings button click failed, using default settings');
+        });
+        await page.waitForTimeout(1500);
 
-      // モデル選択（Veo 3 - Fast または Veo 3 - Quality）
-      const modelText = config.model === 'quality' ? 'Quality' : 'Fast';
-      const modelOption = await page.$(`button:has-text("${modelText}"), [role="option"]:has-text("${modelText}")`);
+        // モデル選択（Veo 3 - Fast または Veo 3 - Quality）
+        const modelText = config.model === 'quality' ? 'Quality' : 'Fast';
+        const modelOption = await page.$(`button:has-text("${modelText}"), [role="option"]:has-text("${modelText}")`);
 
-      if (modelOption) {
-        await modelOption.click();
-        console.error('Selected model: ' + modelText);
+        if (modelOption) {
+          await modelOption.click();
+          console.error('Selected model: ' + modelText);
+          await page.waitForTimeout(500);
+        }
+
+        // 設定ダイアログを閉じる
+        await page.keyboard.press('Escape');
         await page.waitForTimeout(500);
       }
-
-      // 設定ダイアログを閉じる
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(500);
+    } catch (e) {
+      console.error('Model configuration skipped: ' + e.message);
     }
 
     // プロンプト入力欄を探す
@@ -432,6 +493,26 @@ async function run() {
     // プロジェクトURLを取得
     const projectUrl = page.url();
 
+    // 動画ダウンロード
+    let localVideoPath = null;
+    if (config.downloadVideo && videoGenerated && videoUrl && !videoUrl.startsWith('blob:')) {
+      try {
+        // 出力ディレクトリ確認
+        if (!fs.existsSync(config.outputDir)) {
+          fs.mkdirSync(config.outputDir, { recursive: true });
+        }
+
+        // ファイル名生成
+        const filename = config.outputFilename || `flow-video-${Date.now()}.mp4`;
+        localVideoPath = path.join(config.outputDir, filename);
+
+        await downloadVideo(videoUrl, localVideoPath);
+      } catch (downloadError) {
+        console.error('Video download failed: ' + downloadError.message);
+        localVideoPath = null;
+      }
+    }
+
     // タブを閉じるかどうか
     if (!config.keepTabOpen) {
       await page.close();
@@ -443,6 +524,7 @@ async function run() {
     const result = {
       success: videoGenerated,
       videoUrl: videoUrl,
+      localVideoPath: localVideoPath,
       projectUrl: projectUrl,
       screenshot: finalScreenshot,
       generationTime: Math.round((Date.now() - startTime) / 1000) + 's'

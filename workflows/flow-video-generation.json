@@ -1,0 +1,91 @@
+{
+  "name": "Google Flow Video Generation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-video",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "flow-video-webhook"
+    },
+    {
+      "parameters": {
+        "command": "=node /home/node/flow-video-auto.js '{{ JSON.stringify({ prompt: $json.body.prompt, model: $json.body.model || \"fast\", downloadVideo: true, outputDir: \"/tmp/videos\", keepTabOpen: false }) }}'"
+      },
+      "id": "execute-script",
+      "name": "Generate Video",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// スクリプトの出力をパース\nconst output = $input.first().json.stdout;\n\ntry {\n  const result = JSON.parse(output);\n  return [{ json: result }];\n} catch (e) {\n  return [{ json: { error: 'Failed to parse output', raw: output } }];\n}"
+      },
+      "id": "parse-result",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [750, 300]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1000, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Generate Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video": {
+      "main": [
+        [
+          {
+            "node": "Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Result": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionTimeout": 900,
+    "saveManualExecutions": true
+  },
+  "tags": [],
+  "pinData": {}
+}

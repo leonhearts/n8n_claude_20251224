@@ -1,0 +1,56 @@
+{
+  "_comment": "既存SUNOワークフローに追加するノード群（ショート動画をVeo3化）",
+  "_usage": "1. 既存ワークフローに以下のノードを追加 2. connectionsを調整 3. ショート動画生成3を置き換え",
+
+  "add_nodes": [
+    {
+      "_comment": "ショート音声切出の後に追加",
+      "parameters": {
+        "command": "=node /home/node/veo3-shorts-simple.js '{{ JSON.stringify({ prompt: $('プロンプト生成 ✔').item.json.output.header_short + \" \" + $('プロンプト生成 ✔').item.json.output.footer_short, imagePath: \"/tmp/output_kaeuta.png\", outputPath: \"/tmp/veo3_shorts_kaeuta.mp4\", mode: \"image\", videoCount: 2 }) }}'",
+        "options": {
+          "timeout": 1800000
+        }
+      },
+      "id": "veo3-generate",
+      "name": "Veo3動画生成",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [3700, 1952],
+      "retryOnFail": true,
+      "waitBetweenTries": 10000,
+      "maxTries": 2
+    },
+    {
+      "_comment": "Veo3生成結果をパース",
+      "parameters": {
+        "jsCode": "const output = $input.first().json.stdout;\ntry {\n  const result = JSON.parse(output);\n  if (result.success) {\n    return [{ json: { veo3Path: result.outputPath, success: true } }];\n  } else {\n    throw new Error(result.error || 'Veo3 generation failed');\n  }\n} catch (e) {\n  // フォールバック: 静止画モードに戻す\n  console.log('Veo3 failed, falling back to static image');\n  return [{ json: { veo3Path: null, success: false, fallback: true } }];\n}"
+      },
+      "id": "veo3-parse",
+      "name": "Veo3結果パース",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3860, 1952]
+    }
+  ],
+
+  "replace_node": {
+    "_comment": "ショート動画生成3を置き換え（Veo3動画を使用、フォールバック対応）",
+    "old_name": "ショート動画生成3",
+    "new_node": {
+      "parameters": {
+        "command": "=# Veo3動画が利用可能かチェック\nif [ -f \"/tmp/veo3_shorts_kaeuta.mp4\" ] && [ -s \"/tmp/veo3_shorts_kaeuta.mp4\" ]; then\n  echo \"Using Veo3 video\"\n  # Veo3動画にテキストオーバーレイとオーディオを追加\n  ffmpeg -y -i /tmp/veo3_shorts_kaeuta.mp4 -i /tmp/short_audio_kaeuta.mp3 \\\n    -filter_complex \"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1[bg];[bg]drawtext=text='{{ $('★サビ位置検出の実行結果を取得 ✔').item.json.header_short }}':fontfile=/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf:{{ $('★サビ位置検出の実行結果を取得 ✔').item.json.headerStyle }}:x=(w-text_w)/2:y=200[v1];[v1]drawtext=text='{{ $('★サビ位置検出の実行結果を取得 ✔').item.json.footer_short }}':fontfile=/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf:{{ $('★サビ位置検出の実行結果を取得 ✔').item.json.footerStyle }}:x=(w-text_w)/2:y=h-350[outv]\" \\\n    -map \"[outv]\" -map 1:a \\\n    -c:v libx264 -c:a aac -b:a 192k -shortest -pix_fmt yuv420p -t 15 \\\n    /tmp/output_short_kaeuta.mp4\nelse\n  echo \"Veo3 not available, using static image\"\n  # フォールバック: 従来の静止画モード\n  ffmpeg -y -loop 1 -i /tmp/output_kaeuta.png -i /tmp/short_audio_kaeuta.mp3 \\\n    -filter_complex \"[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,setsar=1[bg];[bg]drawtext=text='{{ $('★サビ位置検出の実行結果を取得 ✔').item.json.header_short }}':fontfile=/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf:{{ $('★サビ位置検出の実行結果を取得 ✔').item.json.headerStyle }}:x=(w-text_w)/2:y=200[v1];[v1]drawtext=text='{{ $('★サビ位置検出の実行結果を取得 ✔').item.json.footer_short }}':fontfile=/usr/share/fonts/opentype/ipafont-gothic/ipagp.ttf:{{ $('★サビ位置検出の実行結果を取得 ✔').item.json.footerStyle }}:x=(w-text_w)/2:y=h-350[outv]\" \\\n    -map \"[outv]\" -map 1:a \\\n    -c:v libx264 -tune stillimage -c:a aac -b:a 192k -shortest -pix_fmt yuv420p -t 15 \\\n    /tmp/output_short_kaeuta.mp4\nfi"
+      },
+      "id": "b24b5261-6c3d-40e7-be29-c1e763f3799d",
+      "name": "ショート動画生成3",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [4176, 1952],
+      "typeVersion": 1
+    }
+  },
+
+  "connection_changes": {
+    "_comment": "接続の変更",
+    "old_flow": "ショート音声切出 → ショート動画生成3",
+    "new_flow": "ショート音声切出 → Veo3動画生成 → Veo3結果パース → ショート動画生成3"
+  }
+}

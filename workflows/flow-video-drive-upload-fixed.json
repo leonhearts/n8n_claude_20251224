@@ -1,0 +1,188 @@
+{
+  "name": "Google Flow Video - Drive Upload Fixed",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "687bad00-d7bc-4dcc-817e-4a481c2942db",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [416, 112]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "prompt",
+              "name": "prompt",
+              "type": "string",
+              "value": "A beautiful sunset over the ocean with waves"
+            },
+            {
+              "id": "model",
+              "name": "model",
+              "type": "string",
+              "value": "fast"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e47e68e0-a1a6-4849-acb6-0c8c48b5707c",
+      "name": "Set Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [672, 112]
+    },
+    {
+      "parameters": {
+        "command": "=node /home/node/flow-video-auto.js '{{ JSON.stringify({ prompt: $json.prompt, model: $json.model, downloadVideo: true, outputDir: \"/tmp/videos\" }) }}'"
+      },
+      "id": "89404da6-6ca8-4edb-b0f7-4b2938a5c124",
+      "name": "Generate Video",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [896, 112]
+    },
+    {
+      "parameters": {
+        "jsCode": "// スクリプトの出力をパース\nconst output = $input.first().json.stdout;\n\ntry {\n  const result = JSON.parse(output);\n  \n  if (result.success && result.localVideoPath) {\n    return [{\n      json: {\n        success: true,\n        videoUrl: result.videoUrl,\n        localPath: result.localVideoPath,\n        projectUrl: result.projectUrl,\n        generationTime: result.generationTime,\n        fileName: result.localVideoPath.split('/').pop()\n      }\n    }];\n  } else {\n    throw new Error(result.error || 'Video generation failed');\n  }\n} catch (e) {\n  throw new Error('Parse error: ' + e.message + ' | Raw: ' + output.substring(0, 200));\n}"
+      },
+      "id": "3de10a5b-8b9b-49b2-adc5-6c9b5c12a367",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1088, 112]
+    },
+    {
+      "parameters": {
+        "operation": "read",
+        "fileSelector": "={{ $json.localPath }}",
+        "options": {}
+      },
+      "id": "read-video-file",
+      "name": "Read Video File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1280, 112]
+    },
+    {
+      "parameters": {
+        "name": "={{ $('Parse Result').item.json.fileName }}",
+        "driveId": {
+          "__rl": true,
+          "value": "My Drive",
+          "mode": "list",
+          "cachedResultName": "My Drive",
+          "cachedResultUrl": "https://drive.google.com/drive/my-drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "1lpyK2P7_mbMzQ74IkA2f4leDnuHs7CO_",
+          "mode": "list",
+          "cachedResultName": "テストアップロード",
+          "cachedResultUrl": "https://drive.google.com/drive/folders/1lpyK2P7_mbMzQ74IkA2f4leDnuHs7CO_"
+        },
+        "options": {}
+      },
+      "id": "48e65fc5-0a17-473f-8cfa-b635f1d25493",
+      "name": "Upload to Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1480, 112],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "SxFWwEDsUgCoW69A",
+          "name": "Google Drive tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 最終結果をまとめる\nconst parseResult = $('Parse Result').first().json;\nconst driveResult = $input.first().json;\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Video uploaded to Google Drive!',\n    videoUrl: parseResult.videoUrl,\n    projectUrl: parseResult.projectUrl,\n    driveFileId: driveResult.id,\n    driveFileName: driveResult.name,\n    driveWebViewLink: driveResult.webViewLink,\n    generationTime: parseResult.generationTime\n  }\n}];"
+      },
+      "id": "e32866c7-2c76-42ab-b32b-f5787fef6bbf",
+      "name": "Final Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1680, 112]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video": {
+      "main": [
+        [
+          {
+            "node": "Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Result": {
+      "main": [
+        [
+          {
+            "node": "Read Video File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Video File": {
+      "main": [
+        [
+          {
+            "node": "Upload to Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Google Drive": {
+      "main": [
+        [
+          {
+            "node": "Final Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionTimeout": 900,
+    "saveManualExecutions": true
+  },
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

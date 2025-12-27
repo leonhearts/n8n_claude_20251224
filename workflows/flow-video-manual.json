@@ -1,0 +1,100 @@
+{
+  "name": "Google Flow Video - Manual Trigger",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "prompt",
+              "value": "A beautiful sunset over the ocean with waves"
+            },
+            {
+              "name": "model",
+              "value": "fast"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-prompt",
+      "name": "Set Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "command": "=node /home/node/flow-video-auto.js '{{ JSON.stringify({ prompt: $json.prompt, model: $json.model, downloadVideo: true, outputDir: \"/tmp/videos\" }) }}'",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "id": "execute-script",
+      "name": "Generate Video",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// スクリプトの出力をパース\nconst output = $input.first().json.stdout;\n\ntry {\n  const result = JSON.parse(output);\n  \n  // 成功した場合の処理\n  if (result.success) {\n    return [{\n      json: {\n        success: true,\n        message: 'Video generated successfully!',\n        videoUrl: result.videoUrl,\n        localPath: result.localVideoPath,\n        projectUrl: result.projectUrl,\n        generationTime: result.generationTime\n      }\n    }];\n  } else {\n    return [{\n      json: {\n        success: false,\n        error: result.error || 'Unknown error'\n      }\n    }];\n  }\n} catch (e) {\n  return [{\n    json: {\n      success: false,\n      error: 'Failed to parse output',\n      raw: output\n    }\n  }];\n}"
+      },
+      "id": "parse-result",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video": {
+      "main": [
+        [
+          {
+            "node": "Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionTimeout": 900,
+    "saveManualExecutions": true
+  },
+  "tags": [],
+  "pinData": {}
+}

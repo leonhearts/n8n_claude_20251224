@@ -1,0 +1,183 @@
+{
+  "name": "Google Flow Video - with Drive Upload",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [250, 300]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "prompt",
+              "name": "prompt",
+              "type": "string",
+              "value": "A beautiful sunset over the ocean with waves"
+            },
+            {
+              "id": "model",
+              "name": "model",
+              "type": "string",
+              "value": "fast"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-prompt",
+      "name": "Set Prompt",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "command": "=node /home/node/flow-video-auto.js '{{ JSON.stringify({ prompt: $json.prompt, model: $json.model, downloadVideo: true, outputDir: \"/tmp/videos\" }) }}'",
+        "options": {
+          "timeout": 900000
+        }
+      },
+      "id": "execute-script",
+      "name": "Generate Video",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// スクリプトの出力をパース\nconst output = $input.first().json.stdout;\n\ntry {\n  const result = JSON.parse(output);\n  \n  if (result.success && result.localVideoPath) {\n    return [{\n      json: {\n        success: true,\n        videoUrl: result.videoUrl,\n        localPath: result.localVideoPath,\n        projectUrl: result.projectUrl,\n        generationTime: result.generationTime,\n        fileName: result.localVideoPath.split('/').pop()\n      }\n    }];\n  } else {\n    throw new Error(result.error || 'Video generation failed');\n  }\n} catch (e) {\n  throw new Error('Parse error: ' + e.message + ' | Raw: ' + output.substring(0, 200));\n}"
+      },
+      "id": "parse-result",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300]
+    },
+    {
+      "parameters": {
+        "filePath": "={{ $json.localPath }}",
+        "options": {}
+      },
+      "id": "read-file",
+      "name": "Read Video File",
+      "type": "n8n-nodes-base.readBinaryFiles",
+      "typeVersion": 1,
+      "position": [1050, 300]
+    },
+    {
+      "parameters": {
+        "operation": "upload",
+        "name": "={{ $('Parse Result').item.json.fileName }}",
+        "folderId": {
+          "__rl": true,
+          "mode": "list",
+          "value": ""
+        },
+        "options": {
+          "spaces": "drive"
+        }
+      },
+      "id": "google-drive",
+      "name": "Upload to Google Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [1250, 300],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "",
+          "name": ""
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 最終結果をまとめる\nconst parseResult = $('Parse Result').first().json;\nconst driveResult = $input.first().json;\n\nreturn [{\n  json: {\n    success: true,\n    message: 'Video uploaded to Google Drive!',\n    videoUrl: parseResult.videoUrl,\n    projectUrl: parseResult.projectUrl,\n    driveFileId: driveResult.id,\n    driveFileName: driveResult.name,\n    driveWebViewLink: driveResult.webViewLink,\n    generationTime: parseResult.generationTime\n  }\n}];"
+      },
+      "id": "final-result",
+      "name": "Final Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1450, 300]
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Set Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Prompt": {
+      "main": [
+        [
+          {
+            "node": "Generate Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Video": {
+      "main": [
+        [
+          {
+            "node": "Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Result": {
+      "main": [
+        [
+          {
+            "node": "Read Video File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Video File": {
+      "main": [
+        [
+          {
+            "node": "Upload to Google Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Google Drive": {
+      "main": [
+        [
+          {
+            "node": "Final Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionTimeout": 900,
+    "saveManualExecutions": true
+  },
+  "tags": [],
+  "pinData": {}
+}
