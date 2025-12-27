@@ -95,6 +95,29 @@ async function run() {
       process.exit(1);
     }
 
+    // TOPページの場合、「新しいプロジェクト」をクリック
+    console.log('Checking for New Project button...');
+    const newProjectSelectors = [
+      'button:has-text("新しいプロジェクト")',
+      'button:has(i:text("add_2"))',
+      'button:has-text("New project")',
+    ];
+
+    for (const selector of newProjectSelectors) {
+      try {
+        const btn = await page.$(selector);
+        if (btn && await btn.isVisible()) {
+          console.log('Found New Project button, clicking...');
+          await btn.click();
+          await page.waitForTimeout(5000);
+          console.log('Project page loaded');
+          break;
+        }
+      } catch (e) {
+        // continue
+      }
+    }
+
     console.log('\n--- Testing Selectors ---\n');
 
     // 各セレクタをテスト
