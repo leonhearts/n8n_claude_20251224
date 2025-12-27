@@ -207,6 +207,31 @@ async function run() {
     // 通知を閉じる
     await dismissNotifications(page);
 
+    // TOPページの場合、「新しいプロジェクト」をクリック
+    if (!config.projectUrl) {
+      console.error('Checking for New Project button...');
+      const newProjectSelectors = [
+        'button:has-text("新しいプロジェクト")',
+        'button:has(i:text("add_2"))',
+        'button:has-text("New project")',
+      ];
+
+      for (const selector of newProjectSelectors) {
+        try {
+          const btn = await page.$(selector);
+          if (btn && await btn.isVisible()) {
+            console.error('Found New Project button, clicking...');
+            await btn.click();
+            await page.waitForTimeout(5000);
+            console.error('Project page loaded');
+            break;
+          }
+        } catch (e) {
+          // continue
+        }
+      }
+    }
+
     // スクリーンショット（デバッグ用）
     const step1Screenshot = path.join(config.screenshotDir, 'flow-step1-loaded.png');
     await page.screenshot({ path: step1Screenshot });
