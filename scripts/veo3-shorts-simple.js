@@ -138,17 +138,21 @@ async function startNewProject(page) {
 async function selectImageToVideoMode(page, imagePath) {
   console.error('Selecting Image-to-Video mode...');
 
-  // モードセレクタをクリック
+  // オーバーレイを閉じるため少し待機
+  await page.waitForTimeout(2000);
+  await dismissNotifications(page);
+
+  // モードセレクタをクリック（force: trueでオーバーレイを無視）
   const modeBtn = await findElement(page, SELECTORS.modeSelector);
   if (modeBtn) {
-    await modeBtn.click();
-    await page.waitForTimeout(1000);
+    await modeBtn.click({ force: true });
+    await page.waitForTimeout(1500);
 
     // 「画像から動画」を選択
     const i2vOption = await page.$('text=画像から動画');
     if (i2vOption) {
-      await i2vOption.click();
-      await page.waitForTimeout(1500);
+      await i2vOption.click({ force: true });
+      await page.waitForTimeout(2000);
     }
   }
 
@@ -193,7 +197,7 @@ async function generateVideo(page, config, index) {
     await page.waitForTimeout(500);
   }
 
-  await createBtn.click();
+  await createBtn.click({ force: true });
   console.error('Generation started...');
   await page.waitForTimeout(5000);
 
@@ -233,16 +237,17 @@ async function extendScene(page, config, index) {
   console.error(`\n=== Extending Scene ${index} ===`);
 
   // プラスボタンをクリック
+  await dismissNotifications(page);
   const addBtn = await page.waitForSelector(SELECTORS.addClipButton, { timeout: 10000 });
   if (!addBtn) throw new Error('Add clip button not found');
-  await addBtn.click();
+  await addBtn.click({ force: true });
   console.error('Clicked add clip button');
   await page.waitForTimeout(1000);
 
   // 「拡張…」を選択
   const extendOption = await page.waitForSelector(SELECTORS.extendOption, { timeout: 5000 });
   if (!extendOption) throw new Error('Extend option not found');
-  await extendOption.click();
+  await extendOption.click({ force: true });
   console.error('Selected extend option');
   await page.waitForTimeout(2000);
 
@@ -267,7 +272,7 @@ async function extendScene(page, config, index) {
     await page.waitForTimeout(500);
   }
 
-  await createBtn.click();
+  await createBtn.click({ force: true });
   console.error('Extension started...');
   await page.waitForTimeout(5000);
 
