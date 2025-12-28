@@ -53,6 +53,9 @@ const SELECTORS = {
   addClipButton: '#PINHOLE_ADD_CLIP_CARD_ID',
   extendOption: '[role="menuitem"]:has-text("拡張")',
   downloadButton: 'button:has(i:text("download"))',
+  // エクスポートダイアログ用
+  exportDownloadLink: 'a:has-text("ダウンロード")',
+  exportCloseButton: 'button:has-text("閉じる")',
 };
 
 /**
@@ -453,55 +456,93 @@ async function main() {
     }
     console.error('Existing files tracked: ' + existingFiles.size);
 
-    // ダウンロードボタンをクリック
+    // ステップ1: ダウンロードボタン（アイコン）をクリック → エクスポート開始
     const downloadBtn = await page.$(SELECTORS.downloadButton);
     if (!downloadBtn || !(await downloadBtn.isVisible())) {
       throw new Error('Download button not found or not visible');
     }
 
     await downloadBtn.click({ force: true });
-    console.error('Clicked download button, waiting for download...');
+    console.error('Clicked download button, waiting for export...');
 
-    // 新しいファイルが出現するのを待つ（最大90秒）
-    let downloadedFile = null;
-    for (let i = 0; i < 45; i++) {
+    // ステップ2: エクスポート完了を待ち、ダイアログの「ダウンロード」リンクをクリック
+    console.error('Waiting for export dialog...');
+    let downloadLinkClicked = false;
+    for (let i = 0; i < 60; i++) { // 最大120秒待機
       await page.waitForTimeout(2000);
 
-      for (const dir of possiblePaths) {
-        try {
-          const files = fs.readdirSync(dir);
-          for (const f of files) {
-            const fullPath = path.join(dir, f);
-            // 新しいMP4ファイルかつ一時ファイルでない
-            if (f.endsWith('.mp4') &&
-                !f.includes('temp') &&
-                !f.includes('veo3_') &&
-                !existingFiles.has(fullPath)) {
-              // ファイルサイズをチェック（ダウンロード中でないことを確認）
-              const stats = fs.statSync(fullPath);
-              if (stats.size > 100000) { // 100KB以上
-                downloadedFile = fullPath;
-                console.error('Found new downloaded file: ' + downloadedFile + ' (' + (stats.size / 1024 / 1024).toFixed(2) + 'MB)');
-                break;
-              }
-            }
-          }
-        } catch (e) {}
-        if (downloadedFile) break;
+      // ダウンロードリンクを探す
+      const downloadLink = await page.$(SELECTORS.exportDownloadLink);
+      if (downloadLink && await downloadLink.isVisible()) {
+        console.error('Export complete! Clicking download link...');
+
+        // リンクのhref属性を取得
+        const href = await downloadLink.getAttribute('href');
+        if (href && href.startsWith('http')) {
+          // 直接URLからダウンロード
+          console.error('Downloading from URL: ' + href.substring(0, 50) + '...');
+          await downloadVideo(href, tempPath);
+          downloadLinkClicked = true;
+          break;
+        } else {
+          // リンクをクリックしてダウンロード
+          await downloadLink.click({ force: true });
+          console.error('Clicked download link, waiting for file...');
+          downloadLinkClicked = true;
+          break;
+        }
       }
-      if (downloadedFile) break;
 
       if (i % 10 === 9) {
-        console.error('Still waiting for download... (' + ((i + 1) * 2) + 's)');
+        console.error('Still waiting for export... (' + ((i + 1) * 2) + 's)');
       }
     }
 
-    if (downloadedFile) {
-      fs.copyFileSync(downloadedFile, tempPath);
-      console.error('Copied to temp: ' + tempPath);
-      try { fs.unlinkSync(downloadedFile); } catch (e) {}
-    } else {
-      throw new Error('Download failed - no new file appeared after 90 seconds');
+    if (!downloadLinkClicked) {
+      throw new Error('Export dialog did not appear after 120 seconds');
+    }
+
+    // ステップ3: ファイルダウンロードを待つ（URLから直接ダウンロードした場合はスキップ）
+    if (!fs.existsSync(tempPath) || fs.statSync(tempPath).size < 100000) {
+      console.error('Waiting for file download...');
+      let downloadedFile = null;
+      for (let i = 0; i < 30; i++) { // 最大60秒待機
+        await page.waitForTimeout(2000);
+
+        for (const dir of possiblePaths) {
+          try {
+            const files = fs.readdirSync(dir);
+            for (const f of files) {
+              const fullPath = path.join(dir, f);
+              if (f.endsWith('.mp4') &&
+                  !f.includes('temp') &&
+                  !f.includes('veo3_') &&
+                  !existingFiles.has(fullPath)) {
+                const stats = fs.statSync(fullPath);
+                if (stats.size > 100000) {
+                  downloadedFile = fullPath;
+                  console.error('Found downloaded file: ' + downloadedFile + ' (' + (stats.size / 1024 / 1024).toFixed(2) + 'MB)');
+                  break;
+                }
+              }
+            }
+          } catch (e) {}
+          if (downloadedFile) break;
+        }
+        if (downloadedFile) break;
+
+        if (i % 10 === 9) {
+          console.error('Still waiting for file... (' + ((i + 1) * 2) + 's)');
+        }
+      }
+
+      if (downloadedFile) {
+        fs.copyFileSync(downloadedFile, tempPath);
+        console.error('Copied to temp: ' + tempPath);
+        try { fs.unlinkSync(downloadedFile); } catch (e) {}
+      } else {
+        throw new Error('Download failed - file not found after 60 seconds');
+      }
     }
 
     // 音声なしでコピー
