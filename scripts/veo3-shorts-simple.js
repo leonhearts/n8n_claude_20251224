@@ -526,9 +526,9 @@ async function main() {
             await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 30000 });
           }
         } else {
-          // hrefがない場合はforceクリック
-          await downloadLink.click({ force: true });
-          console.error('Clicked download link (force click, no href)');
+          // hrefがない場合はJavaScriptクリック（force clickはChromeでダウンロード失敗する）
+          await downloadLink.evaluate(el => el.click());
+          console.error('Clicked download link (via JS)');
         }
 
         console.error('Download initiated, waiting for file...');
