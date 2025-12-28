@@ -319,13 +319,27 @@ async function extendScene(page, config, index) {
   const startTime = Date.now();
   let completed = false;
 
+  // まず、プラスボタンが消える（非表示になる）まで待つ
+  console.error('Waiting for generation to start (add clip button should disappear)...');
+  let buttonDisappeared = false;
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(2000);
+    const addBtnCheck = await page.$(SELECTORS.addClipButton);
+    if (!addBtnCheck || !(await addBtnCheck.isVisible())) {
+      buttonDisappeared = true;
+      console.error('Add clip button disappeared, generation in progress...');
+      break;
+    }
+  }
+
+  // プラスボタンが再度表示されるまで待つ（生成完了）
   while (Date.now() - startTime < config.waitTimeout) {
     await page.waitForTimeout(10000);
     console.error(`  ${Math.round((Date.now() - startTime) / 1000)}s elapsed`);
 
     await dismissNotifications(page);
 
-    // 拡張完了の判定：動画要素が更新されるか、プラスボタンが再度表示される
+    // 拡張完了の判定：プラスボタンが再度表示される
     const addBtnAgain = await page.$(SELECTORS.addClipButton);
     if (addBtnAgain && await addBtnAgain.isVisible()) {
       completed = true;
