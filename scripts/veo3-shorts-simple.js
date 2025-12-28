@@ -433,52 +433,84 @@ async function main() {
     // 4. 最終動画をダウンロード
     console.error('\n=== Downloading final video ===');
 
+    const tempPath = '/tmp/veo3_combined_temp.mp4';
+
+    // 可能なダウンロードディレクトリ
+    const possiblePaths = [
+      '/home/node/Downloads',
+      '/tmp',
+      '/home/node',
+      '/root/Downloads'
+    ];
+
+    // ダウンロード前の既存ファイルを記録
+    const existingFiles = new Set();
+    for (const dir of possiblePaths) {
+      try {
+        const files = fs.readdirSync(dir);
+        files.forEach(f => existingFiles.add(path.join(dir, f)));
+      } catch (e) {}
+    }
+    console.error('Existing files tracked: ' + existingFiles.size);
+
     // ダウンロードボタンをクリック
     const downloadBtn = await page.$(SELECTORS.downloadButton);
-    if (downloadBtn && await downloadBtn.isVisible()) {
-      console.error('Found download button, clicking...');
-
-      // ダウンロードイベントを待機
-      const [download] = await Promise.all([
-        page.waitForEvent('download', { timeout: 60000 }),
-        downloadBtn.click({ force: true })
-      ]);
-
-      // ダウンロードしたファイルを保存
-      const tempPath = '/tmp/veo3_combined_temp.mp4';
-      await download.saveAs(tempPath);
-      console.error('Downloaded to: ' + tempPath);
-
-      // 音声なしでコピー
-      execSync(`ffmpeg -y -i "${tempPath}" -an -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
-
-      // 一時ファイル削除
-      try { fs.unlinkSync(tempPath); } catch (e) {}
-
-      console.error('Output: ' + config.outputPath);
-    } else {
-      // フォールバック: video要素からURLを取得
-      console.error('Download button not found, trying video element...');
-      const videos = await page.$$(SELECTORS.videoElement);
-      let finalVideoUrl = null;
-
-      for (const video of videos) {
-        const src = await video.getAttribute('src');
-        if (src && src.startsWith('http')) {
-          finalVideoUrl = src;
-        }
-      }
-
-      if (!finalVideoUrl) {
-        throw new Error('Final video URL not found');
-      }
-
-      const tempPath = '/tmp/veo3_combined_temp.mp4';
-      await downloadVideo(finalVideoUrl, tempPath);
-      execSync(`ffmpeg -y -i "${tempPath}" -an -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
-      try { fs.unlinkSync(tempPath); } catch (e) {}
-      console.error('Output: ' + config.outputPath);
+    if (!downloadBtn || !(await downloadBtn.isVisible())) {
+      throw new Error('Download button not found or not visible');
     }
+
+    await downloadBtn.click({ force: true });
+    console.error('Clicked download button, waiting for download...');
+
+    // 新しいファイルが出現するのを待つ（最大90秒）
+    let downloadedFile = null;
+    for (let i = 0; i < 45; i++) {
+      await page.waitForTimeout(2000);
+
+      for (const dir of possiblePaths) {
+        try {
+          const files = fs.readdirSync(dir);
+          for (const f of files) {
+            const fullPath = path.join(dir, f);
+            // 新しいMP4ファイルかつ一時ファイルでない
+            if (f.endsWith('.mp4') &&
+                !f.includes('temp') &&
+                !f.includes('veo3_') &&
+                !existingFiles.has(fullPath)) {
+              // ファイルサイズをチェック（ダウンロード中でないことを確認）
+              const stats = fs.statSync(fullPath);
+              if (stats.size > 100000) { // 100KB以上
+                downloadedFile = fullPath;
+                console.error('Found new downloaded file: ' + downloadedFile + ' (' + (stats.size / 1024 / 1024).toFixed(2) + 'MB)');
+                break;
+              }
+            }
+          }
+        } catch (e) {}
+        if (downloadedFile) break;
+      }
+      if (downloadedFile) break;
+
+      if (i % 10 === 9) {
+        console.error('Still waiting for download... (' + ((i + 1) * 2) + 's)');
+      }
+    }
+
+    if (downloadedFile) {
+      fs.copyFileSync(downloadedFile, tempPath);
+      console.error('Copied to temp: ' + tempPath);
+      try { fs.unlinkSync(downloadedFile); } catch (e) {}
+    } else {
+      throw new Error('Download failed - no new file appeared after 90 seconds');
+    }
+
+    // 音声なしでコピー
+    execSync(`ffmpeg -y -i "${tempPath}" -an -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
+
+    // 一時ファイル削除
+    try { fs.unlinkSync(tempPath); } catch (e) {}
+
+    console.error('Output: ' + config.outputPath);
 
     await page.close();
 
