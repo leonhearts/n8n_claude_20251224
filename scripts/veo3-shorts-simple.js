@@ -243,21 +243,31 @@ async function generateVideo(page, config, index) {
 
     await dismissNotifications(page);
 
+    // シーン拡張プラスボタンが表示されたら完了
+    const addClipBtn = await page.$(SELECTORS.addClipButton);
+    if (addClipBtn && await addClipBtn.isVisible()) {
+      console.error(`Video ${index} ready! (add clip button visible)`);
+      break;
+    }
+
+    // video要素も確認（バックアップ判定）
     const video = await page.$(SELECTORS.videoElement);
     if (video) {
       const src = await video.getAttribute('src');
       if (src && src.startsWith('http')) {
-        videoUrl = src;
-        console.error(`Video ${index} ready!`);
-        break;
+        // video要素があっても、プラスボタンが表示されるまでもう少し待つ
+        console.error(`Video element found, waiting for add clip button...`);
+        await page.waitForTimeout(5000);
+        const addClipBtnRetry = await page.$(SELECTORS.addClipButton);
+        if (addClipBtnRetry && await addClipBtnRetry.isVisible()) {
+          console.error(`Video ${index} ready!`);
+          break;
+        }
       }
     }
   }
 
-  if (!videoUrl) throw new Error(`Video ${index} generation timeout`);
-
   return {
-    url: videoUrl,
     time: Math.round((Date.now() - startTime) / 1000)
   };
 }
