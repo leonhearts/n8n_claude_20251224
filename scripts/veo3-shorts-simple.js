@@ -25,6 +25,7 @@ const DEFAULT_CONFIG = {
   mode: 'frame', // 'frame' または 'text'
   videoCount: 2,
   waitTimeout: 600000,
+  cdpUrl: 'http://host.docker.internal:9222',
 };
 
 // セレクタ
@@ -414,7 +415,7 @@ async function main() {
   let totalTime = 0;
 
   try {
-    browser = await chromium.connectOverCDP('http://192.168.65.254:9222');
+    browser = await chromium.connectOverCDP(config.cdpUrl);
     const context = browser.contexts()[0];
     page = await context.newPage();
 
