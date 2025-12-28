@@ -184,11 +184,21 @@ async function selectFrameToVideoMode(page, imagePath) {
   }
 
   // 4. ファイルを直接設定（アップロードボタンをクリックせずにinput[type="file"]に直接設定）
+  console.error('Looking for file input...');
+  await page.waitForTimeout(2000); // ダイアログが開くのを待つ
+
   const fileInput = await page.$(SELECTORS.fileInput);
+  console.error('File input found: ' + (fileInput ? 'yes' : 'no'));
+
   if (fileInput && fs.existsSync(imagePath)) {
+    console.error('Setting input files...');
     await fileInput.setInputFiles(imagePath);
     console.error('Image uploaded: ' + imagePath);
     await page.waitForTimeout(3000);
+  } else {
+    console.error('File input not found or image does not exist: ' + imagePath);
+    // スクリーンショットを撮る
+    await page.screenshot({ path: '/tmp/veo3-no-file-input.png' });
   }
 
   // 6. 「切り抜きして保存」ボタンをクリック
