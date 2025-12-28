@@ -494,10 +494,24 @@ async function main() {
     await downloadBtn.click({ force: true });
     console.error('Clicked download button, waiting for export...');
 
-    // ステップ2: エクスポート完了を待ち、ダイアログの「ダウンロード」リンクをクリック
+    // ステップ2: エクスポート完了を待ち、ダウンロードURLを取得して直接ダウンロード
+    // CDP接続ではChromeのダウンロードマネージャが不安定なため、URLを取得して直接ダウンロードする
     console.error('Waiting for export dialog...');
     let downloadLinkClicked = false;
-    let downloadedFile = null;  // Playwrightのダウンロードハンドラで設定される
+    let downloadedFile = null;
+    let capturedDownloadUrl = null;
+
+    // ネットワークリクエストをインターセプトしてダウンロードURLをキャプチャ
+    page.on('request', request => {
+      const url = request.url();
+      // Google Storageからの動画ダウンロードURLをキャプチャ
+      if ((url.includes('storage.googleapis.com') || url.includes('googleusercontent.com')) &&
+          (url.includes('.mp4') || url.includes('video') || url.includes('download'))) {
+        console.error('Captured download URL: ' + url.substring(0, 100) + '...');
+        capturedDownloadUrl = url;
+      }
+    });
+
     for (let i = 0; i < 60; i++) { // 最大120秒待機
       await page.waitForTimeout(2000);
 
@@ -509,27 +523,64 @@ async function main() {
         // ダイアログが完全に表示されるまで少し待つ
         await page.waitForTimeout(1000);
 
-        // Playwrightのダウンロードハンドラを使用
-        console.error('Setting up download handler...');
+        // まずhref属性を確認
+        const href = await downloadLink.getAttribute('href');
+        console.error('Download link href: ' + (href ? href.substring(0, 80) + '...' : 'null'));
 
-        // ダウンロードを待機するPromiseを先に設定
-        const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
+        if (href && href.startsWith('http')) {
+          // hrefがある場合は直接ダウンロード
+          console.error('Using href for direct download...');
+          const downloadPath = '/tmp/veo3_export_' + Date.now() + '.mp4';
+          try {
+            await downloadVideo(href, downloadPath);
+            downloadedFile = downloadPath;
+            downloadLinkClicked = true;
+            break;
+          } catch (err) {
+            console.error('Direct download failed: ' + err.message);
+          }
+        }
 
-        // クリックでダウンロードをトリガー
+        // hrefがない場合はクリックしてURLをキャプチャ
+        console.error('Clicking download link to capture URL...');
+        capturedDownloadUrl = null;
+
+        // クリックでダウンロードをトリガー（ネットワークリクエストをキャプチャ）
         await downloadLink.evaluate(el => el.click());
-        console.error('Clicked download link, waiting for download to start...');
 
-        // ダウンロードイベントを待つ
-        const download = await downloadPromise;
-        console.error('Download started: ' + download.suggestedFilename());
+        // URLがキャプチャされるまで少し待つ
+        for (let j = 0; j < 10; j++) {
+          await page.waitForTimeout(1000);
+          if (capturedDownloadUrl) {
+            console.error('Using captured URL for download...');
+            const downloadPath = '/tmp/veo3_export_' + Date.now() + '.mp4';
+            try {
+              await downloadVideo(capturedDownloadUrl, downloadPath);
+              downloadedFile = downloadPath;
+              downloadLinkClicked = true;
+            } catch (err) {
+              console.error('Captured URL download failed: ' + err.message);
+            }
+            break;
+          }
+        }
 
-        // ダウンロードを指定パスに保存
-        const downloadPath = path.join('/tmp', download.suggestedFilename() || 'veo3_download.mp4');
-        await download.saveAs(downloadPath);
-        console.error('Download saved to: ' + downloadPath);
+        if (downloadedFile) break;
 
-        // 成功したらこのパスを使用
-        downloadedFile = downloadPath;
+        // URLがキャプチャできなかった場合、Playwrightのダウンロードを試す
+        console.error('URL capture failed, trying Playwright download handler...');
+        try {
+          const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
+          await downloadLink.evaluate(el => el.click());
+          const download = await downloadPromise;
+          console.error('Download started: ' + download.suggestedFilename());
+          const downloadPath = path.join('/tmp', download.suggestedFilename() || 'veo3_download.mp4');
+          await download.saveAs(downloadPath);
+          downloadedFile = downloadPath;
+        } catch (err) {
+          console.error('Playwright download also failed: ' + err.message);
+        }
+
         downloadLinkClicked = true;
         break;
       }
