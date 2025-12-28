@@ -497,6 +497,7 @@ async function main() {
     // ステップ2: エクスポート完了を待ち、ダイアログの「ダウンロード」リンクをクリック
     console.error('Waiting for export dialog...');
     let downloadLinkClicked = false;
+    let downloadedFile = null;  // Playwrightのダウンロードハンドラで設定される
     for (let i = 0; i < 60; i++) { // 最大120秒待機
       await page.waitForTimeout(2000);
 
@@ -508,30 +509,27 @@ async function main() {
         // ダイアログが完全に表示されるまで少し待つ
         await page.waitForTimeout(1000);
 
-        // href属性を取得
-        const href = await downloadLink.getAttribute('href');
-        console.error('Download URL: ' + (href ? href.substring(0, 80) + '...' : 'null'));
+        // Playwrightのダウンロードハンドラを使用
+        console.error('Setting up download handler...');
 
-        if (href) {
-          // target="_blank"を削除してから同じタブでナビゲート
-          await downloadLink.evaluate(el => el.removeAttribute('target'));
+        // ダウンロードを待機するPromiseを先に設定
+        const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
 
-          // 通常のクリック（forceなし）を試す
-          try {
-            await downloadLink.click({ timeout: 5000 });
-            console.error('Clicked download link (normal click)');
-          } catch (clickErr) {
-            // クリックが失敗した場合、直接ナビゲート
-            console.error('Click failed, navigating directly to URL...');
-            await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 30000 });
-          }
-        } else {
-          // hrefがない場合はJavaScriptクリック（force clickはChromeでダウンロード失敗する）
-          await downloadLink.evaluate(el => el.click());
-          console.error('Clicked download link (via JS)');
-        }
+        // クリックでダウンロードをトリガー
+        await downloadLink.evaluate(el => el.click());
+        console.error('Clicked download link, waiting for download to start...');
 
-        console.error('Download initiated, waiting for file...');
+        // ダウンロードイベントを待つ
+        const download = await downloadPromise;
+        console.error('Download started: ' + download.suggestedFilename());
+
+        // ダウンロードを指定パスに保存
+        const downloadPath = path.join('/tmp', download.suggestedFilename() || 'veo3_download.mp4');
+        await download.saveAs(downloadPath);
+        console.error('Download saved to: ' + downloadPath);
+
+        // 成功したらこのパスを使用
+        downloadedFile = downloadPath;
         downloadLinkClicked = true;
         break;
       }
@@ -545,10 +543,11 @@ async function main() {
       throw new Error('Export dialog did not appear after 120 seconds');
     }
 
-    // ステップ3: ファイルダウンロードを待つ
-    console.error('Waiting for file download...');
-    let downloadedFile = null;
-    for (let i = 0; i < 45; i++) { // 最大90秒待機
+    // ステップ3: ファイルダウンロードを待つ（Playwrightで取得済みでなければ）
+    if (!downloadedFile) {
+      console.error('Waiting for file download (fallback mode)...');
+    }
+    for (let i = 0; i < 45 && !downloadedFile; i++) { // 最大90秒待機
       await page.waitForTimeout(2000);
 
       for (const dir of possiblePaths) {
