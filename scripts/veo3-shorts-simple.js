@@ -439,7 +439,10 @@ async function main() {
     const tempPath = '/tmp/veo3_combined_temp.mp4';
 
     // 可能なダウンロードディレクトリ
+    // Windows CDPブラウザ経由のダウンロードは /mnt/downloads にマウントが必要
+    // docker run時: -v "C:\Users\Administrator\Downloads:/mnt/downloads"
     const possiblePaths = [
+      '/mnt/downloads',  // Windows Downloads フォルダのマウントポイント
       '/home/node/Downloads',
       '/tmp',
       '/home/node',
