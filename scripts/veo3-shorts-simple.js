@@ -178,14 +178,24 @@ async function selectFrameToVideoMode(page, imagePath) {
   // 3. 画像追加のプラスボタンをクリック
   const addImgBtn = await page.$(SELECTORS.addImageButton);
   if (addImgBtn) {
-    await addImgBtn.click({ force: true });
-    console.error('Clicked add image button');
-    await page.waitForTimeout(1500);
+    // JavaScriptで直接クリック（Playwrightのクリックがオーバーレイでブロックされる場合の対策）
+    await addImgBtn.evaluate(el => el.click());
+    console.error('Clicked add image button (via JS)');
+    await page.waitForTimeout(2000);
   }
 
-  // 4. ファイルを直接設定（アップロードボタンをクリックせずにinput[type="file"]に直接設定）
+  // 4. アップロードボタンをクリック（必要な場合）
+  console.error('Looking for upload button...');
+  const uploadBtn = await page.$(SELECTORS.uploadButton);
+  if (uploadBtn && await uploadBtn.isVisible()) {
+    await uploadBtn.evaluate(el => el.click());
+    console.error('Clicked upload button (via JS)');
+    await page.waitForTimeout(2000);
+  }
+
+  // 5. ファイル入力を探す
   console.error('Looking for file input...');
-  await page.waitForTimeout(2000); // ダイアログが開くのを待つ
+  await page.waitForTimeout(1000);
 
   const fileInput = await page.$(SELECTORS.fileInput);
   console.error('File input found: ' + (fileInput ? 'yes' : 'no'));
