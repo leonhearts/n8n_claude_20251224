@@ -45,7 +45,10 @@ const SELECTORS = {
   modeSelector: 'button[role="combobox"]',
   frameToVideoOption: 'text=フレームから動画',
   addImageButton: 'button:has(i.google-symbols:text("add"))',
-  uploadButton: 'button:has(i:text("upload"))',
+  uploadButton: [
+    'button:has(i.google-symbols:text("upload"))',
+    'button:has-text("アップロード")',
+  ],
   fileInput: 'input[type="file"]',
   cropAndSaveButton: 'button:has-text("切り抜きして保存")',
 
@@ -186,11 +189,13 @@ async function selectFrameToVideoMode(page, imagePath) {
 
   // 4. アップロードボタンをクリック（必要な場合）
   console.error('Looking for upload button...');
-  const uploadBtn = await page.$(SELECTORS.uploadButton);
-  if (uploadBtn && await uploadBtn.isVisible()) {
+  const uploadBtn = await findElement(page, SELECTORS.uploadButton);
+  if (uploadBtn) {
     await uploadBtn.evaluate(el => el.click());
     console.error('Clicked upload button (via JS)');
     await page.waitForTimeout(2000);
+  } else {
+    console.error('Upload button not found');
   }
 
   // 5. ファイル入力を探す
