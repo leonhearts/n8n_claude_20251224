@@ -49,6 +49,7 @@ const SELECTORS = {
   cropAndSaveButton: 'button:has-text("切り抜きして保存")',
 
   // シーン拡張用セレクタ
+  addToSceneButton: 'button:has-text("シーンに追加")',
   addClipButton: '#PINHOLE_ADD_CLIP_CARD_ID',
   extendOption: '[role="menuitem"]:has-text("拡張")',
   downloadButton: 'button:has(i:text("download"))',
@@ -233,9 +234,8 @@ async function generateVideo(page, config, index) {
   console.error('Generation started...');
   await page.waitForTimeout(5000);
 
-  // 動画生成完了を待つ
+  // 動画生成完了を待つ（「シーンに追加」ボタンが表示されるまで）
   const startTime = Date.now();
-  let videoUrl = null;
 
   while (Date.now() - startTime < config.waitTimeout) {
     await page.waitForTimeout(10000);
@@ -243,27 +243,28 @@ async function generateVideo(page, config, index) {
 
     await dismissNotifications(page);
 
-    // シーン拡張プラスボタンが表示されたら完了
-    const addClipBtn = await page.$(SELECTORS.addClipButton);
-    if (addClipBtn && await addClipBtn.isVisible()) {
-      console.error(`Video ${index} ready! (add clip button visible)`);
-      break;
-    }
+    // 「シーンに追加」ボタンが表示されたら動画生成完了
+    const addToSceneBtn = await page.$(SELECTORS.addToSceneButton);
+    if (addToSceneBtn && await addToSceneBtn.isVisible()) {
+      console.error(`Video ${index} generated! Found 'Add to Scene' button`);
 
-    // video要素も確認（バックアップ判定）
-    const video = await page.$(SELECTORS.videoElement);
-    if (video) {
-      const src = await video.getAttribute('src');
-      if (src && src.startsWith('http')) {
-        // video要素があっても、プラスボタンが表示されるまでもう少し待つ
-        console.error(`Video element found, waiting for add clip button...`);
-        await page.waitForTimeout(5000);
-        const addClipBtnRetry = await page.$(SELECTORS.addClipButton);
-        if (addClipBtnRetry && await addClipBtnRetry.isVisible()) {
-          console.error(`Video ${index} ready!`);
+      // 「シーンに追加」ボタンをクリック
+      await addToSceneBtn.click({ force: true });
+      console.error('Clicked Add to Scene button');
+      await page.waitForTimeout(3000);
+
+      // シーン拡張プラスボタンが表示されるまで待機
+      console.error('Waiting for scene builder...');
+      for (let i = 0; i < 30; i++) {
+        await page.waitForTimeout(2000);
+        const addClipBtn = await page.$(SELECTORS.addClipButton);
+        if (addClipBtn && await addClipBtn.isVisible()) {
+          console.error(`Video ${index} ready! Scene builder loaded`);
           break;
         }
+        console.error(`  Waiting for add clip button... ${i * 2}s`);
       }
+      break;
     }
   }
 
