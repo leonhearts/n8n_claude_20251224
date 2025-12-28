@@ -476,21 +476,11 @@ async function main() {
       if (downloadLink && await downloadLink.isVisible()) {
         console.error('Export complete! Clicking download link...');
 
-        // リンクのhref属性を取得
-        const href = await downloadLink.getAttribute('href');
-        if (href && href.startsWith('http')) {
-          // 直接URLからダウンロード
-          console.error('Downloading from URL: ' + href.substring(0, 50) + '...');
-          await downloadVideo(href, tempPath);
-          downloadLinkClicked = true;
-          break;
-        } else {
-          // リンクをクリックしてダウンロード
-          await downloadLink.click({ force: true });
-          console.error('Clicked download link, waiting for file...');
-          downloadLinkClicked = true;
-          break;
-        }
+        // リンクをクリックしてブラウザにダウンロードさせる（認証が必要なため直接DLは不可）
+        await downloadLink.click({ force: true });
+        console.error('Clicked download link, waiting for file...');
+        downloadLinkClicked = true;
+        break;
       }
 
       if (i % 10 === 9) {
@@ -502,47 +492,45 @@ async function main() {
       throw new Error('Export dialog did not appear after 120 seconds');
     }
 
-    // ステップ3: ファイルダウンロードを待つ（URLから直接ダウンロードした場合はスキップ）
-    if (!fs.existsSync(tempPath) || fs.statSync(tempPath).size < 100000) {
-      console.error('Waiting for file download...');
-      let downloadedFile = null;
-      for (let i = 0; i < 30; i++) { // 最大60秒待機
-        await page.waitForTimeout(2000);
+    // ステップ3: ファイルダウンロードを待つ
+    console.error('Waiting for file download...');
+    let downloadedFile = null;
+    for (let i = 0; i < 45; i++) { // 最大90秒待機
+      await page.waitForTimeout(2000);
 
-        for (const dir of possiblePaths) {
-          try {
-            const files = fs.readdirSync(dir);
-            for (const f of files) {
-              const fullPath = path.join(dir, f);
-              if (f.endsWith('.mp4') &&
-                  !f.includes('temp') &&
-                  !f.includes('veo3_') &&
-                  !existingFiles.has(fullPath)) {
-                const stats = fs.statSync(fullPath);
-                if (stats.size > 100000) {
-                  downloadedFile = fullPath;
-                  console.error('Found downloaded file: ' + downloadedFile + ' (' + (stats.size / 1024 / 1024).toFixed(2) + 'MB)');
-                  break;
-                }
+      for (const dir of possiblePaths) {
+        try {
+          const files = fs.readdirSync(dir);
+          for (const f of files) {
+            const fullPath = path.join(dir, f);
+            if (f.endsWith('.mp4') &&
+                !f.includes('temp') &&
+                !f.includes('veo3_') &&
+                !existingFiles.has(fullPath)) {
+              const stats = fs.statSync(fullPath);
+              if (stats.size > 100000) {
+                downloadedFile = fullPath;
+                console.error('Found downloaded file: ' + downloadedFile + ' (' + (stats.size / 1024 / 1024).toFixed(2) + 'MB)');
+                break;
               }
             }
-          } catch (e) {}
-          if (downloadedFile) break;
-        }
+          }
+        } catch (e) {}
         if (downloadedFile) break;
-
-        if (i % 10 === 9) {
-          console.error('Still waiting for file... (' + ((i + 1) * 2) + 's)');
-        }
       }
+      if (downloadedFile) break;
 
-      if (downloadedFile) {
-        fs.copyFileSync(downloadedFile, tempPath);
-        console.error('Copied to temp: ' + tempPath);
-        try { fs.unlinkSync(downloadedFile); } catch (e) {}
-      } else {
-        throw new Error('Download failed - file not found after 60 seconds');
+      if (i % 10 === 9) {
+        console.error('Still waiting for file... (' + ((i + 1) * 2) + 's)');
       }
+    }
+
+    if (downloadedFile) {
+      fs.copyFileSync(downloadedFile, tempPath);
+      console.error('Copied to temp: ' + tempPath);
+      try { fs.unlinkSync(downloadedFile); } catch (e) {}
+    } else {
+      throw new Error('Download failed - file not found after 90 seconds');
     }
 
     // 音声なしでコピー
