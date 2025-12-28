@@ -188,12 +188,26 @@ async function selectFrameToVideoMode(page, imagePath) {
   }
 
   // 4. アップロードボタンをクリック（必要な場合）
+  // ファイルダイアログが開いた場合は自動で閉じる
   console.error('Looking for upload button...');
+
+  // ファイルダイアログハンドラを設定（開いたら自動でキャンセル）
+  const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null);
+
   const uploadBtn = await findElement(page, SELECTORS.uploadButton);
   if (uploadBtn) {
     await uploadBtn.evaluate(el => el.click());
     console.error('Clicked upload button (via JS)');
-    await page.waitForTimeout(2000);
+
+    // ファイルダイアログが開いた場合、Escapeで閉じる
+    const fileChooser = await fileChooserPromise;
+    if (fileChooser) {
+      console.error('File dialog opened, closing with Escape...');
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(500);
+    }
+
+    await page.waitForTimeout(1000);
   } else {
     console.error('Upload button not found');
   }
