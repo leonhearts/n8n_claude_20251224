@@ -574,9 +574,23 @@ async function main() {
           await downloadLink.evaluate(el => el.click());
           const download = await downloadPromise;
           console.error('Download started: ' + download.suggestedFilename());
-          const downloadPath = path.join('/tmp', download.suggestedFilename() || 'veo3_download.mp4');
-          await download.saveAs(downloadPath);
-          downloadedFile = downloadPath;
+
+          // ダウンロードURLを取得してNode.jsで直接ダウンロード（Chromeのダウンロードマネージャをバイパス）
+          const downloadUrl = download.url();
+          console.error('Download URL from Playwright: ' + (downloadUrl ? downloadUrl.substring(0, 100) + '...' : 'null'));
+
+          if (downloadUrl) {
+            const downloadPath = path.join('/tmp', download.suggestedFilename() || 'veo3_download.mp4');
+            console.error('Downloading directly via Node.js http...');
+            await downloadVideo(downloadUrl, downloadPath);
+            downloadedFile = downloadPath;
+            console.error('Direct download successful: ' + downloadPath);
+          } else {
+            // URLがない場合のみsaveAsを試す
+            const downloadPath = path.join('/tmp', download.suggestedFilename() || 'veo3_download.mp4');
+            await download.saveAs(downloadPath);
+            downloadedFile = downloadPath;
+          }
         } catch (err) {
           console.error('Playwright download also failed: ' + err.message);
         }
