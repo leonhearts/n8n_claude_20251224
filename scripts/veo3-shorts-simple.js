@@ -581,10 +581,26 @@ async function main() {
 
           if (downloadUrl) {
             const downloadPath = path.join('/tmp', download.suggestedFilename() || 'veo3_download.mp4');
-            console.error('Downloading directly via Node.js http...');
-            await downloadVideo(downloadUrl, downloadPath);
-            downloadedFile = downloadPath;
-            console.error('Direct download successful: ' + downloadPath);
+
+            if (downloadUrl.startsWith('data:')) {
+              // data URL（Base64エンコード）の場合、デコードして保存
+              console.error('Decoding Base64 data URL...');
+              const matches = downloadUrl.match(/^data:([^;]+);base64,(.+)$/);
+              if (matches) {
+                const buffer = Buffer.from(matches[2], 'base64');
+                fs.writeFileSync(downloadPath, buffer);
+                downloadedFile = downloadPath;
+                console.error('Base64 decode successful: ' + downloadPath + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
+              } else {
+                console.error('Failed to parse data URL');
+              }
+            } else {
+              // HTTP URLの場合
+              console.error('Downloading directly via Node.js http...');
+              await downloadVideo(downloadUrl, downloadPath);
+              downloadedFile = downloadPath;
+              console.error('Direct download successful: ' + downloadPath);
+            }
           } else {
             // URLがない場合のみsaveAsを試す
             const downloadPath = path.join('/tmp', download.suggestedFilename() || 'veo3_download.mp4');
