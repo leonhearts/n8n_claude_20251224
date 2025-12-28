@@ -251,16 +251,22 @@ async function generateVideo(page, config, index) {
       console.error('Clicked Add to Scene button');
       await page.waitForTimeout(3000);
 
-      // シーン拡張プラスボタンが表示されるまで待機
+      // シーン拡張プラスボタンが表示され、有効になるまで待機
       console.error('Waiting for scene builder...');
       for (let i = 0; i < 30; i++) {
         await page.waitForTimeout(2000);
         const addClipBtn = await page.$(SELECTORS.addClipButton);
         if (addClipBtn && await addClipBtn.isVisible()) {
-          console.error(`Video ${index} ready! Scene builder loaded`);
-          break;
+          // disabled属性がなくなるまで待つ
+          const isDisabled = await addClipBtn.getAttribute('disabled');
+          if (isDisabled === null) {
+            console.error(`Video ${index} ready! Scene builder loaded and button enabled`);
+            break;
+          }
+          console.error(`  Waiting for add clip button to be enabled... ${i * 2}s`);
+        } else {
+          console.error(`  Waiting for add clip button... ${i * 2}s`);
         }
-        console.error(`  Waiting for add clip button... ${i * 2}s`);
       }
       break;
     }
@@ -277,14 +283,27 @@ async function generateVideo(page, config, index) {
 async function extendScene(page, config, index) {
   console.error(`\n=== Extending Scene ${index} ===`);
 
-  // プラスボタンをクリック（JavaScriptで直接クリックしてドラッグを避ける）
+  // プラスボタンが有効になるまで待機
   await dismissNotifications(page);
-  await page.waitForSelector(SELECTORS.addClipButton, { timeout: 10000 });
+  console.error('Waiting for add clip button to be enabled...');
+
+  for (let i = 0; i < 30; i++) {
+    await page.waitForTimeout(2000);
+    const addClipBtn = await page.$(SELECTORS.addClipButton);
+    if (addClipBtn && await addClipBtn.isVisible()) {
+      const isDisabled = await addClipBtn.getAttribute('disabled');
+      if (isDisabled === null) {
+        console.error('Add clip button is enabled');
+        break;
+      }
+      console.error(`  Button still disabled... ${i * 2}s`);
+    }
+  }
 
   // JavaScriptで直接クリック（ドラッグ操作を避けるため）
   await page.evaluate(() => {
     const btn = document.querySelector('#PINHOLE_ADD_CLIP_CARD_ID');
-    if (btn) btn.click();
+    if (btn && !btn.disabled) btn.click();
   });
   console.error('Clicked add clip button (via JS)');
   await page.waitForTimeout(1000);
