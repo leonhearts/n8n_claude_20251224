@@ -173,15 +173,7 @@ async function selectFrameToVideoMode(page, imagePath) {
     await page.waitForTimeout(1500);
   }
 
-  // 4. アップロードボタンをクリック
-  const uploadBtn = await page.$(SELECTORS.uploadButton);
-  if (uploadBtn) {
-    await uploadBtn.click({ force: true });
-    console.error('Clicked upload button');
-    await page.waitForTimeout(1000);
-  }
-
-  // 5. ファイルを選択
+  // 4. ファイルを直接設定（アップロードボタンをクリックせずにinput[type="file"]に直接設定）
   const fileInput = await page.$(SELECTORS.fileInput);
   if (fileInput && fs.existsSync(imagePath)) {
     await fileInput.setInputFiles(imagePath);
@@ -279,12 +271,16 @@ async function generateVideo(page, config, index) {
 async function extendScene(page, config, index) {
   console.error(`\n=== Extending Scene ${index} ===`);
 
-  // プラスボタンをクリック
+  // プラスボタンをクリック（JavaScriptで直接クリックしてドラッグを避ける）
   await dismissNotifications(page);
-  const addBtn = await page.waitForSelector(SELECTORS.addClipButton, { timeout: 10000 });
-  if (!addBtn) throw new Error('Add clip button not found');
-  await addBtn.click({ force: true });
-  console.error('Clicked add clip button');
+  await page.waitForSelector(SELECTORS.addClipButton, { timeout: 10000 });
+
+  // JavaScriptで直接クリック（ドラッグ操作を避けるため）
+  await page.evaluate(() => {
+    const btn = document.querySelector('#PINHOLE_ADD_CLIP_CARD_ID');
+    if (btn) btn.click();
+  });
+  console.error('Clicked add clip button (via JS)');
   await page.waitForTimeout(1000);
 
   // 「拡張…」を選択
