@@ -474,11 +474,35 @@ async function main() {
       // ダウンロードリンクを探す
       const downloadLink = await page.$(SELECTORS.exportDownloadLink);
       if (downloadLink && await downloadLink.isVisible()) {
-        console.error('Export complete! Clicking download link...');
+        console.error('Export complete! Preparing download...');
 
-        // リンクをクリックしてブラウザにダウンロードさせる（認証が必要なため直接DLは不可）
-        await downloadLink.click({ force: true });
-        console.error('Clicked download link, waiting for file...');
+        // ダイアログが完全に表示されるまで少し待つ
+        await page.waitForTimeout(1000);
+
+        // href属性を取得
+        const href = await downloadLink.getAttribute('href');
+        console.error('Download URL: ' + (href ? href.substring(0, 80) + '...' : 'null'));
+
+        if (href) {
+          // target="_blank"を削除してから同じタブでナビゲート
+          await downloadLink.evaluate(el => el.removeAttribute('target'));
+
+          // 通常のクリック（forceなし）を試す
+          try {
+            await downloadLink.click({ timeout: 5000 });
+            console.error('Clicked download link (normal click)');
+          } catch (clickErr) {
+            // クリックが失敗した場合、直接ナビゲート
+            console.error('Click failed, navigating directly to URL...');
+            await page.goto(href, { waitUntil: 'domcontentloaded', timeout: 30000 });
+          }
+        } else {
+          // hrefがない場合はforceクリック
+          await downloadLink.click({ force: true });
+          console.error('Clicked download link (force click, no href)');
+        }
+
+        console.error('Download initiated, waiting for file...');
         downloadLinkClicked = true;
         break;
       }
