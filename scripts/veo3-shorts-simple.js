@@ -187,47 +187,57 @@ async function selectFrameToVideoMode(page, imagePath) {
     await page.waitForTimeout(2000);
   }
 
-  // 4. アップロードボタンをクリック（必要な場合）
-  // ファイルダイアログが開いた場合は自動で閉じる
+  // 4. アップロードボタンをクリックしてファイルダイアログでファイルを設定
   console.error('Looking for upload button...');
 
-  // ファイルダイアログハンドラを設定（開いたら自動でキャンセル）
-  const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null);
+  // ファイルダイアログハンドラを設定（開いたらファイルを設定）
+  const fileChooserPromise = page.waitForEvent('filechooser', { timeout: 10000 }).catch(() => null);
 
   const uploadBtn = await findElement(page, SELECTORS.uploadButton);
+  let fileUploaded = false;
+
   if (uploadBtn) {
     await uploadBtn.evaluate(el => el.click());
     console.error('Clicked upload button (via JS)');
 
-    // ファイルダイアログが開いた場合、Escapeで閉じる
+    // ファイルダイアログが開いた場合、ファイルを直接設定
     const fileChooser = await fileChooserPromise;
     if (fileChooser) {
-      console.error('File dialog opened, closing with Escape...');
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(500);
+      console.error('File dialog opened, setting file via fileChooser...');
+      if (fs.existsSync(imagePath)) {
+        await fileChooser.setFiles(imagePath);
+        console.error('Image uploaded via fileChooser: ' + imagePath);
+        fileUploaded = true;
+        await page.waitForTimeout(3000);
+      } else {
+        console.error('Image file does not exist: ' + imagePath);
+        await page.keyboard.press('Escape');
+      }
+    } else {
+      console.error('File dialog did not open');
+      await page.waitForTimeout(1000);
     }
-
-    await page.waitForTimeout(1000);
   } else {
     console.error('Upload button not found');
   }
 
-  // 5. ファイル入力を探す
-  console.error('Looking for file input...');
-  await page.waitForTimeout(1000);
+  // 5. fileChooserで設定できなかった場合、file inputを探す
+  if (!fileUploaded) {
+    console.error('Looking for file input (fallback)...');
+    await page.waitForTimeout(1000);
 
-  const fileInput = await page.$(SELECTORS.fileInput);
-  console.error('File input found: ' + (fileInput ? 'yes' : 'no'));
+    const fileInput = await page.$(SELECTORS.fileInput);
+    console.error('File input found: ' + (fileInput ? 'yes' : 'no'));
 
-  if (fileInput && fs.existsSync(imagePath)) {
-    console.error('Setting input files...');
-    await fileInput.setInputFiles(imagePath);
-    console.error('Image uploaded: ' + imagePath);
-    await page.waitForTimeout(3000);
-  } else {
-    console.error('File input not found or image does not exist: ' + imagePath);
-    // スクリーンショットを撮る
-    await page.screenshot({ path: '/tmp/veo3-no-file-input.png' });
+    if (fileInput && fs.existsSync(imagePath)) {
+      console.error('Setting input files...');
+      await fileInput.setInputFiles(imagePath);
+      console.error('Image uploaded: ' + imagePath);
+      await page.waitForTimeout(3000);
+    } else {
+      console.error('File input not found or image does not exist: ' + imagePath);
+      await page.screenshot({ path: '/tmp/veo3-no-file-input.png' });
+    }
   }
 
   // 6. 「切り抜きして保存」ボタンをクリック
