@@ -25,7 +25,7 @@ const DEFAULT_CONFIG = {
   mode: 'frame', // 'frame' または 'text'
   videoCount: 2,
   waitTimeout: 600000,
-  cdpUrl: 'http://host.docker.internal:9222',
+  cdpUrl: 'http://192.168.65.254:9222',
 };
 
 // セレクタ
