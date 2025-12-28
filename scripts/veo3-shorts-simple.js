@@ -85,14 +85,20 @@ async function downloadVideo(url, outputPath) {
 }
 
 /**
- * 通知を閉じる
+ * 通知を閉じる（タイムラインのスライダーは除外）
  */
 async function dismissNotifications(page) {
   try {
-    const items = await page.$$('[data-radix-collection-item]');
+    // 通知要素のみを対象にする（スライダーやタイムライン要素を除外）
+    const items = await page.$$('[data-radix-collection-item]:not([role="slider"]):not(.sc-605710a8-2)');
     for (const item of items) {
+      // タイムライン関連の要素はスキップ
+      const tagName = await item.evaluate(el => el.tagName);
+      const role = await item.getAttribute('role');
+      if (role === 'slider' || tagName === 'SPAN') continue;
+
       const box = await item.boundingBox();
-      if (box) {
+      if (box && box.y < 200) { // 画面上部の通知のみ対象
         await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await page.mouse.down();
         await page.mouse.move(box.x + box.width + 100, box.y + box.height / 2, { steps: 5 });
@@ -405,36 +411,55 @@ async function main() {
       totalTime += extResult.time;
     }
 
-    // 4. 最終動画をダウンロード（シーン拡張後は1つの結合された動画になっている）
+    // 4. 最終動画をダウンロード
     console.error('\n=== Downloading final video ===');
 
-    // video要素から最終的なURLを取得
-    const videos = await page.$$(SELECTORS.videoElement);
-    let finalVideoUrl = null;
+    // ダウンロードボタンをクリック
+    const downloadBtn = await page.$(SELECTORS.downloadButton);
+    if (downloadBtn && await downloadBtn.isVisible()) {
+      console.error('Found download button, clicking...');
 
-    // 最後の動画要素のURLを取得
-    for (const video of videos) {
-      const src = await video.getAttribute('src');
-      if (src && src.startsWith('http')) {
-        finalVideoUrl = src;
+      // ダウンロードイベントを待機
+      const [download] = await Promise.all([
+        page.waitForEvent('download', { timeout: 60000 }),
+        downloadBtn.click({ force: true })
+      ]);
+
+      // ダウンロードしたファイルを保存
+      const tempPath = '/tmp/veo3_combined_temp.mp4';
+      await download.saveAs(tempPath);
+      console.error('Downloaded to: ' + tempPath);
+
+      // 音声なしでコピー
+      execSync(`ffmpeg -y -i "${tempPath}" -an -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
+
+      // 一時ファイル削除
+      try { fs.unlinkSync(tempPath); } catch (e) {}
+
+      console.error('Output: ' + config.outputPath);
+    } else {
+      // フォールバック: video要素からURLを取得
+      console.error('Download button not found, trying video element...');
+      const videos = await page.$$(SELECTORS.videoElement);
+      let finalVideoUrl = null;
+
+      for (const video of videos) {
+        const src = await video.getAttribute('src');
+        if (src && src.startsWith('http')) {
+          finalVideoUrl = src;
+        }
       }
+
+      if (!finalVideoUrl) {
+        throw new Error('Final video URL not found');
+      }
+
+      const tempPath = '/tmp/veo3_combined_temp.mp4';
+      await downloadVideo(finalVideoUrl, tempPath);
+      execSync(`ffmpeg -y -i "${tempPath}" -an -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
+      try { fs.unlinkSync(tempPath); } catch (e) {}
+      console.error('Output: ' + config.outputPath);
     }
-
-    if (!finalVideoUrl) {
-      throw new Error('Final video URL not found');
-    }
-
-    // ダウンロード
-    const tempPath = '/tmp/veo3_combined_temp.mp4';
-    await downloadVideo(finalVideoUrl, tempPath);
-
-    // 音声なしでコピー
-    execSync(`ffmpeg -y -i "${tempPath}" -an -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
-
-    // 一時ファイル削除
-    try { fs.unlinkSync(tempPath); } catch (e) {}
-
-    console.error('Output: ' + config.outputPath);
 
     await page.close();
 
