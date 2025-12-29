@@ -34,6 +34,8 @@ const DEFAULT_CONFIG = {
   videoCount: 1,  // 1の場合はシーン拡張なし、2以上でシーン拡張
   waitTimeout: 600000,
   cdpUrl: 'http://192.168.65.254:9222',
+  // プロジェクト指定（指定した場合は新規作成せずそのプロジェクトを使用）
+  projectUrl: null, // 例: 'https://labs.google/fx/ja/tools/flow/project/xxxxx'
   // 画像生成用オプション
   imageOutputCount: 1,  // 1 または 2
   aspectRatio: 'landscape', // 'landscape'（横向き16:9）または 'portrait'（縦向き9:16）
@@ -163,10 +165,14 @@ async function findElement(page, selectors) {
 }
 
 /**
- * 新しいプロジェクトを開始
+ * プロジェクトを開始（既存または新規）
  */
-async function startNewProject(page) {
-  await page.goto('https://labs.google/fx/tools/flow', { waitUntil: 'domcontentloaded', timeout: 60000 });
+async function startNewProject(page, config) {
+  // プロジェクトURLが指定されている場合はそのURLに直接アクセス
+  const targetUrl = config.projectUrl || 'https://labs.google/fx/tools/flow';
+  console.error('Opening: ' + targetUrl);
+
+  await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(5000);
 
   // ログインチェック
@@ -176,11 +182,16 @@ async function startNewProject(page) {
 
   await dismissNotifications(page);
 
-  // 新しいプロジェクトボタンをクリック
-  const newBtn = await findElement(page, SELECTORS.newProjectButton);
-  if (newBtn) {
-    await newBtn.click();
-    await page.waitForTimeout(5000);
+  // プロジェクトURLが指定されていない場合のみ、新しいプロジェクトボタンをクリック
+  if (!config.projectUrl) {
+    const newBtn = await findElement(page, SELECTORS.newProjectButton);
+    if (newBtn) {
+      await newBtn.click();
+      await page.waitForTimeout(5000);
+    }
+  } else {
+    console.error('Using existing project');
+    await page.waitForTimeout(2000);
   }
 }
 
@@ -815,8 +826,8 @@ async function main() {
 
     // 画像生成モードの場合
     if (config.mode === 'image') {
-      // 1. 新しいプロジェクトを開始
-      await startNewProject(page);
+      // 1. プロジェクトを開始
+      await startNewProject(page, config);
 
       // 2. 画像を生成
       await generateImage(page, config);
@@ -837,8 +848,8 @@ async function main() {
     }
 
     // 動画生成モードの場合
-    // 1. 新しいプロジェクトを開始（1回だけ）
-    await startNewProject(page);
+    // 1. プロジェクトを開始（1回だけ）
+    await startNewProject(page, config);
 
     // 2. 1個目: 画像アップロード + 動画生成
     const firstResult = await generateVideo(page, config, 1);
