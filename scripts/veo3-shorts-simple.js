@@ -992,10 +992,14 @@ async function main() {
           console.error('Export dialog found!');
 
           // hrefが設定されるまで待機（エクスポート完了を待つ）
+          // waitTimeoutを使用（デフォルト600秒 = 10分）
+          const maxHrefChecks = Math.max(30, Math.floor(config.waitTimeout / 2000));
           let href = null;
-          for (let j = 0; j < 30; j++) {
+          for (let j = 0; j < maxHrefChecks; j++) {
             href = await downloadLink.getAttribute('href');
-            console.error('  href check ' + j + ': ' + (href ? href.substring(0, 80) + '...' : 'null'));
+            if (j % 10 === 0 || (href && (href.startsWith('http') || href.startsWith('data:') || href.startsWith('blob:')))) {
+              console.error('  href check ' + j + '/' + maxHrefChecks + ': ' + (href ? href.substring(0, 80) + '...' : 'null'));
+            }
 
             if (href && (href.startsWith('http') || href.startsWith('data:') || href.startsWith('blob:'))) {
               console.error('  href is ready!');
