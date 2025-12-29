@@ -151,6 +151,42 @@ async function dismissNotifications(page) {
 }
 
 /**
+ * 同意ポップアップを閉じる
+ */
+async function dismissConsentPopup(page) {
+  try {
+    // 「同意する」ボタンを探してクリック
+    const consentSelectors = [
+      'button:has-text("同意する")',
+      'button:has-text("同意")',
+      'button:has-text("I agree")',
+      'button:has-text("Accept")',
+    ];
+    for (const sel of consentSelectors) {
+      const btn = await page.$(sel);
+      if (btn && await btn.isVisible()) {
+        await btn.click();
+        console.error('Dismissed consent popup');
+        await page.waitForTimeout(500);
+        return true;
+      }
+    }
+  } catch (e) {}
+  return false;
+}
+
+/**
+ * ファイルダイアログが開いていたら閉じる
+ */
+async function dismissFileDialog(page) {
+  try {
+    // ファイルダイアログをEscapeで閉じる
+    await page.keyboard.press('Escape');
+    await page.waitForTimeout(300);
+  } catch (e) {}
+}
+
+/**
  * 要素を探す
  */
 async function findElement(page, selectors) {
@@ -179,6 +215,12 @@ async function startNewProject(page, config) {
   if (page.url().includes('accounts.google.com')) {
     throw new Error('Not logged in');
   }
+
+  // ファイルダイアログが開いていたら閉じる
+  await dismissFileDialog(page);
+
+  // 同意ポップアップがあれば閉じる
+  await dismissConsentPopup(page);
 
   await dismissNotifications(page);
 
