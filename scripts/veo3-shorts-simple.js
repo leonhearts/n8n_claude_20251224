@@ -236,17 +236,6 @@ async function startNewProject(page, config) {
     }
   } else {
     console.error('Using existing project');
-
-    // 動画モードの場合、シーンビルダータブに移動
-    if (config.mode === 'frame' || config.mode === 'text') {
-      const scenebuilderBtn = await page.$(SELECTORS.scenebuilderTab);
-      if (scenebuilderBtn && await scenebuilderBtn.isVisible()) {
-        await scenebuilderBtn.click();
-        console.error('Clicked Scenebuilder tab');
-        await page.waitForTimeout(2000);
-      }
-    }
-
     await page.waitForTimeout(2000);
   }
 }
@@ -712,6 +701,14 @@ async function generateVideo(page, config, index) {
       await addToSceneBtn.click({ force: true });
       console.error('Clicked Add to Scene button');
       await page.waitForTimeout(3000);
+
+      // シーンビルダータブに移動（既存プロジェクトの場合、自動遷移しないことがある）
+      const scenebuilderBtn = await page.$(SELECTORS.scenebuilderTab);
+      if (scenebuilderBtn && await scenebuilderBtn.isVisible()) {
+        await scenebuilderBtn.click();
+        console.error('Clicked Scenebuilder tab');
+        await page.waitForTimeout(2000);
+      }
 
       // シーン拡張プラスボタンが表示され、有効になるまで待機
       console.error('Waiting for scene builder...');
