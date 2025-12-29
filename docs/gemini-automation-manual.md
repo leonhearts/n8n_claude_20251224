@@ -263,7 +263,76 @@ taskkill /F /IM chrome.exe
 
 ---
 
+## Veo3 ショート動画生成（veo3-shorts-simple.js）
+
+### 概要
+
+Google Veo3を使用して、画像から短い動画を自動生成するスクリプトです。
+
+### 使用方法
+
+```powershell
+# スクリプトをDockerにコピー
+docker cp C:\script_all\n8n_claude_20251224\scripts\veo3-shorts-simple.js n8n-n8n-1:/home/node/veo3-shorts-simple.js
+
+# 実行（PowerShellではエスケープが必要）
+docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"prompt\": \"beautiful night city\", \"imagePath\": \"/tmp/output_kaeuta.png\"}'
+
+# 生成された動画をローカルにコピー
+docker cp n8n-n8n-1:/tmp/veo3_shorts_kaeuta.mp4 C:\Users\Administrator\Downloads\veo3_shorts_kaeuta.mp4
+```
+
+### 重要な注意事項
+
+#### CDP接続URLは `192.168.65.254:9222` を使用
+
+```javascript
+// NG - Docker環境で500エラーになる
+cdpUrl: 'http://host.docker.internal:9222'
+
+// OK
+cdpUrl: 'http://192.168.65.254:9222'
+```
+
+`host.docker.internal` はこの環境では動作しません。必ず `192.168.65.254` を使用してください。
+
+#### Chromeのダウンロードマネージャは使用しない
+
+`--remote-debugging-address=0.0.0.0` でChromeを起動すると、**Chromeのダウンロードマネージャが不安定**になり、手動でもダウンロードが失敗することがあります。
+
+**解決策**: スクリプトはダウンロードURLがBase64エンコード（`data:video/mp4;base64,...`）で提供されることを利用し、Node.jsで直接デコードして保存します。Chromeのダウンロードマネージャを完全にバイパスしています。
+
+#### ファイルアップロードダイアログの処理
+
+Windowsのファイル選択ダイアログが開いた場合、Playwrightの `fileChooser.setFiles()` を使用して直接ファイルを設定します。
+
+**注意**: `Escape` キーでダイアログを閉じると、アップロードUI自体が閉じてしまうため使用しません。
+
+### トラブルシューティング
+
+#### 「Unexpected status 500」エラー
+
+```
+browserType.connectOverCDP: Unexpected status 500 when connecting to http://host.docker.internal:9222/json/version/
+```
+
+→ CDP URLを `http://192.168.65.254:9222` に変更してください。
+
+#### ダウンロードが失敗する
+
+Chromeのダウンロード履歴に「問題が発生しました」と表示される場合：
+- これは `--remote-debugging-address=0.0.0.0` による既知の問題です
+- スクリプトはBase64デコードで対応済みなので、スクリプト経由のダウンロードは成功します
+- 手動ダウンロードは失敗する可能性があります
+
+#### 「File input not found」エラー
+
+ファイルダイアログをEscapeで閉じるとUIが消えます。最新のスクリプトでは `fileChooser.setFiles()` で対応済みです。
+
+---
+
 ## 更新履歴
 
+- **2025-12-29**: Veo3ショート動画生成スクリプトのドキュメント追加、Base64ダウンロード対応
 - **2025-12-28**: ポートプロキシ競合問題の修正、備忘録セクション追加
 - **2024-12-27**: 初版作成
