@@ -285,25 +285,16 @@ async function selectImagesMode(page) {
       await page.waitForTimeout(1000);
     } else {
       console.error('Images mode already selected');
+      // 既にImagesモードなら、セレクタ操作は不要
+      return;
     }
   } else {
     console.error('Images button not found');
   }
 
-  // モードセレクタをクリックして「画像を作成」を選択（JSクリック使用）
-  const modeBtn = await page.$(SELECTORS.modeSelector);
-  if (modeBtn) {
-    await modeBtn.evaluate(el => el.click());
-    console.error('Clicked mode selector (via JS)');
-    await page.waitForTimeout(500);
-
-    const imageCreateOption = await page.$(SELECTORS.imageCreateOption);
-    if (imageCreateOption) {
-      await imageCreateOption.evaluate(el => el.click());
-      console.error('Selected "画像を作成" (via JS)');
-      await page.waitForTimeout(500);
-    }
-  }
+  // Imagesモードに切り替えた後は、デフォルトで「画像を作成」が選択されるはずなので
+  // セレクタ操作は不要（操作するとドロップダウンが開いて入力ができなくなる）
+  await page.waitForTimeout(500);
 }
 
 /**
