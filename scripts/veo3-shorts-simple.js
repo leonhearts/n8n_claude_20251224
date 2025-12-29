@@ -275,13 +275,13 @@ async function selectFrameToVideoMode(page, imagePath) {
 async function selectImagesMode(page) {
   console.error('Switching to Images mode...');
 
-  // Imagesボタンをクリック
+  // Imagesボタンをクリック（JSクリック使用）
   const imagesBtn = await page.$(SELECTORS.imagesButton);
   if (imagesBtn) {
     const state = await imagesBtn.getAttribute('data-state');
     if (state !== 'on') {
-      await imagesBtn.click();
-      console.error('Clicked Images button');
+      await imagesBtn.evaluate(el => el.click());
+      console.error('Clicked Images button (via JS)');
       await page.waitForTimeout(1000);
     } else {
       console.error('Images mode already selected');
@@ -290,17 +290,17 @@ async function selectImagesMode(page) {
     console.error('Images button not found');
   }
 
-  // モードセレクタをクリックして「画像を作成」を選択
+  // モードセレクタをクリックして「画像を作成」を選択（JSクリック使用）
   const modeBtn = await page.$(SELECTORS.modeSelector);
   if (modeBtn) {
-    await modeBtn.click();
-    console.error('Clicked mode selector');
+    await modeBtn.evaluate(el => el.click());
+    console.error('Clicked mode selector (via JS)');
     await page.waitForTimeout(500);
 
     const imageCreateOption = await page.$(SELECTORS.imageCreateOption);
     if (imageCreateOption) {
-      await imageCreateOption.click();
-      console.error('Selected "画像を作成"');
+      await imageCreateOption.evaluate(el => el.click());
+      console.error('Selected "画像を作成" (via JS)');
       await page.waitForTimeout(500);
     }
   }
