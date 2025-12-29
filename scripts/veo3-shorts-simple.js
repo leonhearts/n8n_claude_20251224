@@ -990,22 +990,78 @@ async function main() {
         const downloadLink = await page.$(SELECTORS.exportDownloadLink);
         if (downloadLink && await downloadLink.isVisible()) {
           console.error('Export dialog found!');
-          await page.waitForTimeout(1000);
 
-          // hrefを確認
-          const href = await downloadLink.getAttribute('href');
+          // hrefが設定されるまで待機（エクスポート完了を待つ）
+          let href = null;
+          for (let j = 0; j < 30; j++) {
+            href = await downloadLink.getAttribute('href');
+            console.error('  href check ' + j + ': ' + (href ? href.substring(0, 80) + '...' : 'null'));
+
+            if (href && (href.startsWith('http') || href.startsWith('data:') || href.startsWith('blob:'))) {
+              console.error('  href is ready!');
+              break;
+            }
+            await page.waitForTimeout(2000);
+          }
+
+          // HTTP URLの場合、直接ダウンロード
           if (href && href.startsWith('http')) {
+            console.error('Downloading via HTTP URL...');
             downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
             await downloadVideo(href, downloadedFile);
             break;
           }
 
-          // クリックしてダウンロードイベントを待つ
+          // data URLの場合、Base64デコード
+          if (href && href.startsWith('data:')) {
+            console.error('Decoding data URL...');
+            const matches = href.match(/^data:([^;]+);base64,(.+)$/);
+            if (matches) {
+              const buffer = Buffer.from(matches[2], 'base64');
+              downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
+              fs.writeFileSync(downloadedFile, buffer);
+              console.error('Base64 decode: ' + downloadedFile + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
+              break;
+            }
+          }
+
+          // blob URLの場合、fetch経由で取得
+          if (href && href.startsWith('blob:')) {
+            console.error('Fetching blob URL...');
+            try {
+              const dataUrl = await page.evaluate(async (blobUrl) => {
+                const response = await fetch(blobUrl);
+                const blob = await response.blob();
+                return new Promise((resolve) => {
+                  const reader = new FileReader();
+                  reader.onloadend = () => resolve(reader.result);
+                  reader.readAsDataURL(blob);
+                });
+              }, href);
+
+              if (dataUrl && dataUrl.startsWith('data:')) {
+                const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+                if (matches) {
+                  const buffer = Buffer.from(matches[2], 'base64');
+                  downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
+                  fs.writeFileSync(downloadedFile, buffer);
+                  console.error('Blob fetch successful: ' + downloadedFile + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
+                  break;
+                }
+              }
+            } catch (e) {
+              console.error('Blob fetch failed: ' + e.message);
+            }
+          }
+
+          // hrefがない場合、クリックしてダウンロードイベントを待つ
+          console.error('Trying click download (href was: ' + (href || 'null') + ')...');
           try {
-            const dlPromise = page.waitForEvent('download', { timeout: 30000 });
+            const dlPromise = page.waitForEvent('download', { timeout: 60000 });
             await downloadLink.evaluate(el => el.click());
             const dl = await dlPromise;
             const dlUrl = dl.url();
+            console.error('Download URL from click: ' + (dlUrl ? dlUrl.substring(0, 80) + '...' : 'null'));
 
             if (dlUrl && dlUrl.startsWith('data:')) {
               const matches = dlUrl.match(/^data:([^;]+);base64,(.+)$/);
