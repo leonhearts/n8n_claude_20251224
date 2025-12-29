@@ -76,6 +76,13 @@ docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"frame\
 docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"frame\", \"prompt\": \"カメラがゆっくりズームアウト\", \"imagePath\": \"/tmp/output.png\", \"projectUrl\": \"https://labs.google/fx/ja/tools/flow/project/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\"}'
 ```
 
+**⚠️ 注意: 既存プロジェクトを使用する場合の動作**
+
+- シーンビルダーに既存のシーンがある場合、**続きとして追加**されます
+- 画像のアップロードは既存プロジェクトでは正常に動作しない場合があります
+- 主な用途: **同じプロジェクトで続きのシーンを作成する**場合に使用
+- 新規で動画を作りたい場合は `projectUrl` を指定せずに実行してください
+
 ### 出力
 
 ```powershell
