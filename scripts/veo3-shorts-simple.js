@@ -91,6 +91,9 @@ const SELECTORS = {
   exportDownloadLink: 'a:has-text("ダウンロード")',
   exportCloseButton: 'button:has-text("閉じる")',
 
+  // シーンビルダータブ
+  scenebuilderTab: 'button:has-text("Scenebuilder")',
+
   // 画像ダウンロード用
   imageDownloadButton: 'button:has(i:text("download"))',
   generatedImage: 'img[alt*="Generated"]',
@@ -233,6 +236,17 @@ async function startNewProject(page, config) {
     }
   } else {
     console.error('Using existing project');
+
+    // 動画モードの場合、シーンビルダータブに移動
+    if (config.mode === 'frame' || config.mode === 'text') {
+      const scenebuilderBtn = await page.$(SELECTORS.scenebuilderTab);
+      if (scenebuilderBtn && await scenebuilderBtn.isVisible()) {
+        await scenebuilderBtn.click();
+        console.error('Clicked Scenebuilder tab');
+        await page.waitForTimeout(2000);
+      }
+    }
+
     await page.waitForTimeout(2000);
   }
 }
