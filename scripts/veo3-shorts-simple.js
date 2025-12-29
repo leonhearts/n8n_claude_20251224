@@ -444,6 +444,26 @@ async function downloadGeneratedImage(page, config) {
     }
   }
 
+  // HTTP/HTTPS URLの画像を探す（Google Storage等）
+  for (const img of images) {
+    const src = await img.getAttribute('src');
+    if (src && src.includes('storage.googleapis.com') && src.includes('videofx')) {
+      console.error('Found Google Storage image: ' + src.substring(0, 80) + '...');
+      try {
+        // 拡張子を適切に設定
+        let imgOutputPath = outputPath;
+        if (src.includes('.jpg') || src.includes('.jpeg')) {
+          imgOutputPath = outputPath.replace('.png', '.jpg');
+        }
+        await downloadVideo(src, imgOutputPath);
+        console.error('Image saved from Google Storage: ' + imgOutputPath);
+        return imgOutputPath;
+      } catch (err) {
+        console.error('Failed to download from Google Storage: ' + err.message);
+      }
+    }
+  }
+
   // blob URLの画像を探す
   for (const img of images) {
     const src = await img.getAttribute('src');
