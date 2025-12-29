@@ -384,6 +384,17 @@ async function downloadGeneratedImage(page, config) {
   // 方法1: 画面上の生成された画像からsrcを直接取得
   console.error('Looking for generated image on page...');
   const images = await page.$$('img');
+  console.error('Found ' + images.length + ' images on page');
+
+  // まずすべての画像のsrcをログ出力（デバッグ用）
+  for (let i = 0; i < Math.min(images.length, 10); i++) {
+    const src = await images[i].getAttribute('src');
+    if (src) {
+      console.error('  Image ' + i + ': ' + src.substring(0, 80) + (src.length > 80 ? '...' : ''));
+    }
+  }
+
+  // data:image形式を探す
   for (const img of images) {
     const src = await img.getAttribute('src');
     if (src && src.startsWith('data:image')) {
@@ -395,6 +406,25 @@ async function downloadGeneratedImage(page, config) {
           fs.writeFileSync(outputPath, buffer);
           console.error('Image saved from page: ' + outputPath + ' (' + (buffer.length / 1024).toFixed(2) + 'KB)');
           return outputPath;
+        }
+      }
+    }
+  }
+
+  // HTTP/HTTPS URLの画像を探す（大きい画像を探す）
+  for (const img of images) {
+    const src = await img.getAttribute('src');
+    if (src && (src.startsWith('https://') || src.startsWith('http://'))) {
+      // 画像のサイズを確認
+      const size = await img.evaluate(el => ({ width: el.naturalWidth, height: el.naturalHeight }));
+      if (size.width > 400 && size.height > 400) {
+        console.error('Found large HTTP image: ' + src.substring(0, 80) + '... (' + size.width + 'x' + size.height + ')');
+        try {
+          await downloadVideo(src, outputPath);
+          console.error('Image saved from HTTP: ' + outputPath);
+          return outputPath;
+        } catch (err) {
+          console.error('Failed to download HTTP image: ' + err.message);
         }
       }
     }
