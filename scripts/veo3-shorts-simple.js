@@ -858,208 +858,121 @@ async function main() {
     console.error('\n=== Downloading final video ===');
 
     const tempPath = '/tmp/veo3_combined_temp.mp4';
+    let downloadedFile = null;
 
-    // 可能なダウンロードディレクトリ
-    // Windows CDPブラウザ経由のダウンロードは /mnt/downloads にマウントが必要
-    // docker run時: -v "C:\Users\Administrator\Downloads:/mnt/downloads"
-    const possiblePaths = [
-      '/mnt/downloads',  // Windows Downloads フォルダのマウントポイント
-      '/home/node/Downloads',
-      '/tmp',
-      '/home/node',
-      '/root/Downloads'
-    ];
-
-    // ダウンロード前の既存ファイルを記録
-    const existingFiles = new Set();
-    for (const dir of possiblePaths) {
-      try {
-        const files = fs.readdirSync(dir);
-        files.forEach(f => existingFiles.add(path.join(dir, f)));
-      } catch (e) {}
-    }
-    console.error('Existing files tracked: ' + existingFiles.size);
-
-    // ステップ1: ダウンロードボタン（アイコン）をクリック → エクスポート開始
+    // ダウンロードボタンをクリック
     const downloadBtn = await page.$(SELECTORS.downloadButton);
     if (!downloadBtn || !(await downloadBtn.isVisible())) {
       throw new Error('Download button not found or not visible');
     }
 
-    await downloadBtn.click({ force: true });
-    console.error('Clicked download button, waiting for export...');
+    // 方法1: Playwrightのダウンロードイベントを使用（画像と同じアプローチ）
+    console.error('Clicking download button...');
+    try {
+      const downloadPromise = page.waitForEvent('download', { timeout: 120000 });
+      await downloadBtn.click({ force: true });
+      console.error('Clicked download button, waiting for download event...');
 
-    // ステップ2: エクスポート完了を待ち、ダウンロードURLを取得して直接ダウンロード
-    // CDP接続ではChromeのダウンロードマネージャが不安定なため、URLを取得して直接ダウンロードする
-    console.error('Waiting for export dialog...');
-    let downloadLinkClicked = false;
-    let downloadedFile = null;
-    let capturedDownloadUrl = null;
+      const download = await downloadPromise;
+      console.error('Download started: ' + download.suggestedFilename());
 
-    // ネットワークリクエストをインターセプトしてダウンロードURLをキャプチャ
-    page.on('request', request => {
-      const url = request.url();
-      // Google Storageからの動画ダウンロードURLをキャプチャ
-      if ((url.includes('storage.googleapis.com') || url.includes('googleusercontent.com')) &&
-          (url.includes('.mp4') || url.includes('video') || url.includes('download'))) {
-        console.error('Captured download URL: ' + url.substring(0, 100) + '...');
-        capturedDownloadUrl = url;
+      const downloadUrl = download.url();
+      console.error('Download URL: ' + (downloadUrl ? downloadUrl.substring(0, 100) + '...' : 'null'));
+
+      if (downloadUrl && downloadUrl.startsWith('data:')) {
+        // Base64エンコードの場合、デコードして保存
+        console.error('Decoding Base64 data URL...');
+        const matches = downloadUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (matches) {
+          const buffer = Buffer.from(matches[2], 'base64');
+          downloadedFile = '/tmp/veo3_download_' + Date.now() + '.mp4';
+          fs.writeFileSync(downloadedFile, buffer);
+          console.error('Base64 decode successful: ' + downloadedFile + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
+        }
+      } else if (downloadUrl && downloadUrl.startsWith('http')) {
+        // HTTP URLの場合、直接ダウンロード
+        console.error('Downloading via HTTP...');
+        downloadedFile = '/tmp/veo3_download_' + Date.now() + '.mp4';
+        await downloadVideo(downloadUrl, downloadedFile);
+      } else {
+        // URLがない場合、saveAsを試す
+        downloadedFile = '/tmp/veo3_download_' + Date.now() + '.mp4';
+        await download.saveAs(downloadedFile);
+        console.error('Saved via saveAs: ' + downloadedFile);
       }
-    });
+    } catch (err) {
+      console.error('Download event method failed: ' + err.message);
+    }
 
-    for (let i = 0; i < 60; i++) { // 最大120秒待機
-      await page.waitForTimeout(2000);
+    // 方法2: エクスポートダイアログ経由（シーン拡張ありの場合のフォールバック）
+    if (!downloadedFile) {
+      console.error('Trying export dialog method (fallback)...');
 
-      // ダウンロードリンクを探す
-      const downloadLink = await page.$(SELECTORS.exportDownloadLink);
-      if (downloadLink && await downloadLink.isVisible()) {
-        console.error('Export complete! Preparing download...');
-
-        // ダイアログが完全に表示されるまで少し待つ
-        await page.waitForTimeout(1000);
-
-        // まずhref属性を確認
-        const href = await downloadLink.getAttribute('href');
-        console.error('Download link href: ' + (href ? href.substring(0, 80) + '...' : 'null'));
-
-        if (href && href.startsWith('http')) {
-          // hrefがある場合は直接ダウンロード
-          console.error('Using href for direct download...');
-          const downloadPath = '/tmp/veo3_export_' + Date.now() + '.mp4';
-          try {
-            await downloadVideo(href, downloadPath);
-            downloadedFile = downloadPath;
-            downloadLinkClicked = true;
-            break;
-          } catch (err) {
-            console.error('Direct download failed: ' + err.message);
-          }
+      // ネットワークリクエストをインターセプト
+      let capturedDownloadUrl = null;
+      page.on('request', request => {
+        const url = request.url();
+        if ((url.includes('storage.googleapis.com') || url.includes('googleusercontent.com')) &&
+            (url.includes('.mp4') || url.includes('video') || url.includes('download'))) {
+          console.error('Captured URL: ' + url.substring(0, 100) + '...');
+          capturedDownloadUrl = url;
         }
+      });
 
-        // hrefがない場合はクリックしてURLをキャプチャ
-        console.error('Clicking download link to capture URL...');
-        capturedDownloadUrl = null;
+      for (let i = 0; i < 60; i++) {
+        await page.waitForTimeout(2000);
 
-        // クリックでダウンロードをトリガー（ネットワークリクエストをキャプチャ）
-        await downloadLink.evaluate(el => el.click());
-
-        // URLがキャプチャされるまで少し待つ
-        for (let j = 0; j < 10; j++) {
+        // ダウンロードリンクを探す
+        const downloadLink = await page.$(SELECTORS.exportDownloadLink);
+        if (downloadLink && await downloadLink.isVisible()) {
+          console.error('Export dialog found!');
           await page.waitForTimeout(1000);
-          if (capturedDownloadUrl) {
-            console.error('Using captured URL for download...');
-            const downloadPath = '/tmp/veo3_export_' + Date.now() + '.mp4';
-            try {
-              await downloadVideo(capturedDownloadUrl, downloadPath);
-              downloadedFile = downloadPath;
-              downloadLinkClicked = true;
-            } catch (err) {
-              console.error('Captured URL download failed: ' + err.message);
-            }
+
+          // hrefを確認
+          const href = await downloadLink.getAttribute('href');
+          if (href && href.startsWith('http')) {
+            downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
+            await downloadVideo(href, downloadedFile);
             break;
           }
-        }
 
-        if (downloadedFile) break;
+          // クリックしてダウンロードイベントを待つ
+          try {
+            const dlPromise = page.waitForEvent('download', { timeout: 30000 });
+            await downloadLink.evaluate(el => el.click());
+            const dl = await dlPromise;
+            const dlUrl = dl.url();
 
-        // URLがキャプチャできなかった場合、Playwrightのダウンロードを試す
-        console.error('URL capture failed, trying Playwright download handler...');
-        try {
-          const downloadPromise = page.waitForEvent('download', { timeout: 30000 });
-          await downloadLink.evaluate(el => el.click());
-          const download = await downloadPromise;
-          console.error('Download started: ' + download.suggestedFilename());
-
-          // ダウンロードURLを取得してNode.jsで直接ダウンロード（Chromeのダウンロードマネージャをバイパス）
-          const downloadUrl = download.url();
-          console.error('Download URL from Playwright: ' + (downloadUrl ? downloadUrl.substring(0, 100) + '...' : 'null'));
-
-          if (downloadUrl) {
-            const downloadPath = path.join('/tmp', download.suggestedFilename() || 'veo3_download.mp4');
-
-            if (downloadUrl.startsWith('data:')) {
-              // data URL（Base64エンコード）の場合、デコードして保存
-              console.error('Decoding Base64 data URL...');
-              const matches = downloadUrl.match(/^data:([^;]+);base64,(.+)$/);
+            if (dlUrl && dlUrl.startsWith('data:')) {
+              const matches = dlUrl.match(/^data:([^;]+);base64,(.+)$/);
               if (matches) {
                 const buffer = Buffer.from(matches[2], 'base64');
-                fs.writeFileSync(downloadPath, buffer);
-                downloadedFile = downloadPath;
-                console.error('Base64 decode successful: ' + downloadPath + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
-              } else {
-                console.error('Failed to parse data URL');
+                downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
+                fs.writeFileSync(downloadedFile, buffer);
+                console.error('Base64 decode: ' + downloadedFile);
               }
-            } else {
-              // HTTP URLの場合
-              console.error('Downloading directly via Node.js http...');
-              await downloadVideo(downloadUrl, downloadPath);
-              downloadedFile = downloadPath;
-              console.error('Direct download successful: ' + downloadPath);
+            } else if (dlUrl) {
+              downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
+              await downloadVideo(dlUrl, downloadedFile);
             }
-          } else {
-            // URLがない場合のみsaveAsを試す
-            const downloadPath = path.join('/tmp', download.suggestedFilename() || 'veo3_download.mp4');
-            await download.saveAs(downloadPath);
-            downloadedFile = downloadPath;
+          } catch (e) {
+            console.error('Export download failed: ' + e.message);
           }
-        } catch (err) {
-          console.error('Playwright download also failed: ' + err.message);
+          break;
         }
 
-        downloadLinkClicked = true;
-        break;
-      }
-
-      if (i % 10 === 9) {
-        console.error('Still waiting for export... (' + ((i + 1) * 2) + 's)');
+        if (i % 10 === 9) {
+          console.error('Waiting for export... (' + ((i + 1) * 2) + 's)');
+        }
       }
     }
 
-    if (!downloadLinkClicked) {
-      throw new Error('Export dialog did not appear after 120 seconds');
+    if (!downloadedFile || !fs.existsSync(downloadedFile)) {
+      throw new Error('Download failed - no file downloaded');
     }
 
-    // ステップ3: ファイルダウンロードを待つ（Playwrightで取得済みでなければ）
-    if (!downloadedFile) {
-      console.error('Waiting for file download (fallback mode)...');
-    }
-    for (let i = 0; i < 45 && !downloadedFile; i++) { // 最大90秒待機
-      await page.waitForTimeout(2000);
-
-      for (const dir of possiblePaths) {
-        try {
-          const files = fs.readdirSync(dir);
-          for (const f of files) {
-            const fullPath = path.join(dir, f);
-            if (f.endsWith('.mp4') &&
-                !f.includes('temp') &&
-                !f.includes('veo3_') &&
-                !existingFiles.has(fullPath)) {
-              const stats = fs.statSync(fullPath);
-              if (stats.size > 100000) {
-                downloadedFile = fullPath;
-                console.error('Found downloaded file: ' + downloadedFile + ' (' + (stats.size / 1024 / 1024).toFixed(2) + 'MB)');
-                break;
-              }
-            }
-          }
-        } catch (e) {}
-        if (downloadedFile) break;
-      }
-      if (downloadedFile) break;
-
-      if (i % 10 === 9) {
-        console.error('Still waiting for file... (' + ((i + 1) * 2) + 's)');
-      }
-    }
-
-    if (downloadedFile) {
-      fs.copyFileSync(downloadedFile, tempPath);
-      console.error('Copied to temp: ' + tempPath);
-      try { fs.unlinkSync(downloadedFile); } catch (e) {}
-    } else {
-      throw new Error('Download failed - file not found after 90 seconds');
-    }
+    fs.copyFileSync(downloadedFile, tempPath);
+    console.error('Copied to temp: ' + tempPath);
 
     // 音声なしでコピー
     execSync(`ffmpeg -y -i "${tempPath}" -an -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
