@@ -740,7 +740,7 @@ async function main() {
       }));
 
       await page.close();
-      return;
+      process.exit(0);
     }
 
     // 動画生成モードの場合
