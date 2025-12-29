@@ -375,54 +375,94 @@ async function generateImage(page, config) {
 async function downloadGeneratedImage(page, config) {
   console.error('\n=== Downloading Generated Image ===');
 
-  // ダウンロードボタンをクリック
-  const downloadBtn = await page.$(SELECTORS.downloadButton);
-  if (!downloadBtn) {
-    throw new Error('Download button not found');
-  }
-
-  // Playwrightのダウンロードハンドラを設定
-  const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
-  await downloadBtn.click();
-  console.error('Clicked download button');
-
-  const download = await downloadPromise;
-  console.error('Download started: ' + download.suggestedFilename());
-
-  const downloadUrl = download.url();
-  console.error('Download URL: ' + (downloadUrl ? downloadUrl.substring(0, 100) + '...' : 'null'));
-
   // 出力パスを画像用に調整
   let outputPath = config.outputPath;
   if (outputPath.endsWith('.mp4')) {
     outputPath = outputPath.replace('.mp4', '.png');
   }
 
-  if (downloadUrl && downloadUrl.startsWith('data:')) {
-    // Base64デコード
-    console.error('Decoding Base64 data URL...');
-    const matches = downloadUrl.match(/^data:([^;]+);base64,(.+)$/);
-    if (matches) {
-      const buffer = Buffer.from(matches[2], 'base64');
-      fs.writeFileSync(outputPath, buffer);
-      console.error('Image saved: ' + outputPath + ' (' + (buffer.length / 1024).toFixed(2) + 'KB)');
-      return outputPath;
+  // 方法1: 画面上の生成された画像からsrcを直接取得
+  console.error('Looking for generated image on page...');
+  const images = await page.$$('img');
+  for (const img of images) {
+    const src = await img.getAttribute('src');
+    if (src && src.startsWith('data:image')) {
+      console.error('Found image with data URL');
+      const matches = src.match(/^data:([^;]+);base64,(.+)$/);
+      if (matches) {
+        const buffer = Buffer.from(matches[2], 'base64');
+        if (buffer.length > 10000) { // 10KB以上なら本物の画像
+          fs.writeFileSync(outputPath, buffer);
+          console.error('Image saved from page: ' + outputPath + ' (' + (buffer.length / 1024).toFixed(2) + 'KB)');
+          return outputPath;
+        }
+      }
     }
-  } else if (downloadUrl) {
-    // HTTP URLの場合
-    await downloadVideo(downloadUrl, outputPath);
-    return outputPath;
   }
 
-  // フォールバック: saveAsを試す
-  try {
-    await download.saveAs(outputPath);
-    console.error('Image saved via saveAs: ' + outputPath);
-    return outputPath;
-  } catch (err) {
-    console.error('Download failed: ' + err.message);
-    throw err;
+  // 方法2: blob URLの画像を探す
+  for (const img of images) {
+    const src = await img.getAttribute('src');
+    if (src && src.startsWith('blob:')) {
+      console.error('Found image with blob URL, trying to fetch...');
+      try {
+        const dataUrl = await page.evaluate(async (imgSrc) => {
+          const response = await fetch(imgSrc);
+          const blob = await response.blob();
+          return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
+          });
+        }, src);
+
+        if (dataUrl && dataUrl.startsWith('data:image')) {
+          const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+          if (matches) {
+            const buffer = Buffer.from(matches[2], 'base64');
+            fs.writeFileSync(outputPath, buffer);
+            console.error('Image saved from blob: ' + outputPath + ' (' + (buffer.length / 1024).toFixed(2) + 'KB)');
+            return outputPath;
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch blob: ' + err.message);
+      }
+    }
   }
+
+  // 方法3: ダウンロードボタンをクリックしてイベントを待つ（フォールバック）
+  console.error('Trying download button as fallback...');
+  const downloadBtn = await page.$(SELECTORS.downloadButton);
+  if (downloadBtn) {
+    try {
+      const downloadPromise = page.waitForEvent('download', { timeout: 10000 });
+      await downloadBtn.click();
+      console.error('Clicked download button');
+
+      const download = await downloadPromise;
+      console.error('Download started: ' + download.suggestedFilename());
+
+      const downloadUrl = download.url();
+      if (downloadUrl && downloadUrl.startsWith('data:')) {
+        const matches = downloadUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (matches) {
+          const buffer = Buffer.from(matches[2], 'base64');
+          fs.writeFileSync(outputPath, buffer);
+          console.error('Image saved from download: ' + outputPath + ' (' + (buffer.length / 1024).toFixed(2) + 'KB)');
+          return outputPath;
+        }
+      }
+
+      await download.saveAs(outputPath);
+      console.error('Image saved via saveAs: ' + outputPath);
+      return outputPath;
+    } catch (err) {
+      console.error('Download button fallback failed: ' + err.message);
+    }
+  }
+
+  throw new Error('Failed to download generated image');
 }
 
 /**
