@@ -263,23 +263,107 @@ taskkill /F /IM chrome.exe
 
 ---
 
-## Veo3 ショート動画生成（veo3-shorts-simple.js）
+## Veo3 動画・画像生成（veo3-shorts-simple.js）
 
 ### 概要
 
-Google Veo3を使用して、画像から短い動画を自動生成するスクリプトです。
+Google Veo3/Imagen3を使用して、動画や画像を自動生成するスクリプトです。
 
-### 使用方法
+### モード一覧
+
+| モード | 説明 | 主な用途 |
+|--------|------|----------|
+| `frame` | 画像から動画を生成 | ジャケット画像からショート動画作成 |
+| `image` | プロンプトから画像を生成 | AIアート、背景画像作成 |
+
+### スクリプトのコピー
 
 ```powershell
-# スクリプトをDockerにコピー
 docker cp C:\script_all\n8n_claude_20251224\scripts\veo3-shorts-simple.js n8n-n8n-1:/home/node/veo3-shorts-simple.js
+```
 
-# 実行（PowerShellではエスケープが必要）
-docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"prompt\": \"beautiful night city\", \"imagePath\": \"/tmp/output_kaeuta.png\"}'
+---
 
+### 動画生成モード（mode: frame）
+
+画像を参照して動画を生成します。
+
+#### 基本コマンド
+
+```powershell
+# シンプルな動画生成（シーン拡張なし）
+docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"frame\", \"prompt\": \"カメラがゆっくりズームアウト\", \"imagePath\": \"/tmp/output_kaeuta.png\"}'
+
+# シーン拡張あり（videoCount: 2以上）
+docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"frame\", \"prompt\": \"カメラがゆっくりズームアウト\", \"imagePath\": \"/tmp/output_kaeuta.png\", \"videoCount\": 2}'
+```
+
+#### パラメータ
+
+| パラメータ | 必須 | デフォルト | 説明 |
+|-----------|------|-----------|------|
+| `mode` | ○ | `frame` | `frame` を指定 |
+| `prompt` | ○ | - | 動画のモーション指示 |
+| `imagePath` | ○ | `/tmp/output_kaeuta.png` | 参照画像のパス（Docker内） |
+| `videoCount` | - | `1` | シーン数（1=拡張なし、2以上=シーン拡張） |
+| `outputPath` | - | `/tmp/veo3_movie.mp4` | 出力先パス |
+
+#### 出力
+
+```powershell
 # 生成された動画をローカルにコピー
-docker cp n8n-n8n-1:/tmp/veo3_shorts_kaeuta.mp4 C:\Users\Administrator\Downloads\veo3_shorts_kaeuta.mp4
+docker cp n8n-n8n-1:/tmp/veo3_movie.mp4 C:\Users\Administrator\Downloads\veo3_movie.mp4
+```
+
+---
+
+### 画像生成モード（mode: image）
+
+プロンプトからAI画像を生成します。
+
+#### 基本コマンド
+
+```powershell
+# 横向き画像を1枚生成
+docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"image\", \"prompt\": \"beautiful sunset over mountains, photorealistic\"}'
+
+# 縦向き画像を2枚生成
+docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"image\", \"prompt\": \"anime style portrait\", \"imageOutputCount\": 2, \"aspectRatio\": \"portrait\"}'
+```
+
+#### パラメータ
+
+| パラメータ | 必須 | デフォルト | 説明 |
+|-----------|------|-----------|------|
+| `mode` | ○ | - | `image` を指定 |
+| `prompt` | ○ | - | 画像生成プロンプト |
+| `imageOutputCount` | - | `1` | 出力枚数（`1` または `2`） |
+| `aspectRatio` | - | `landscape` | 縦横比（`landscape`=横向き16:9、`portrait`=縦向き9:16） |
+| `outputPath` | - | `/tmp/veo3_movie.png` | 出力先パス（.mp4指定でも.pngに変換） |
+
+#### 出力
+
+```powershell
+# 生成された画像をローカルにコピー
+docker cp n8n-n8n-1:/tmp/veo3_movie.png C:\Users\Administrator\Downloads\generated_image.png
+
+# JPG形式で保存された場合
+docker cp n8n-n8n-1:/tmp/veo3_movie.jpg C:\Users\Administrator\Downloads\generated_image.jpg
+```
+
+---
+
+### 画像生成→動画生成の連携
+
+1. まず画像を生成
+2. 生成した画像を参照して動画を生成
+
+```powershell
+# 1. 画像を生成（出力: /tmp/veo3_movie.png）
+docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"image\", \"prompt\": \"cyberpunk cityscape at night\", \"aspectRatio\": \"landscape\"}'
+
+# 2. 生成した画像から動画を作成
+docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"frame\", \"prompt\": \"camera slowly pans across the city\", \"imagePath\": \"/tmp/veo3_movie.png\"}'
 ```
 
 ### 重要な注意事項
@@ -333,6 +417,7 @@ Chromeのダウンロード履歴に「問題が発生しました」と表示�
 
 ## 更新履歴
 
+- **2025-12-29**: 画像生成モード追加（出力数・縦横比設定対応）、動画生成のvideoCount=1でシーン拡張スキップ
 - **2025-12-29**: Veo3ショート動画生成スクリプトのドキュメント追加、Base64ダウンロード対応
 - **2025-12-28**: ポートプロキシ競合問題の修正、備忘録セクション追加
 - **2024-12-27**: 初版作成

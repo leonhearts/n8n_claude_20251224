@@ -29,9 +29,9 @@ const { execSync } = require('child_process');
 const DEFAULT_CONFIG = {
   prompt: '',
   imagePath: '/tmp/output_kaeuta.png',
-  outputPath: '/tmp/veo3_shorts_kaeuta.mp4',
+  outputPath: '/tmp/veo3_movie.mp4',
   mode: 'frame', // 'frame', 'text', または 'image'
-  videoCount: 2,
+  videoCount: 1,  // 1の場合はシーン拡張なし、2以上でシーン拡張
   waitTimeout: 600000,
   cdpUrl: 'http://192.168.65.254:9222',
   // 画像生成用オプション
@@ -845,11 +845,13 @@ async function main() {
     results.push(firstResult);
     totalTime += firstResult.time;
 
-    // 3. 2個目以降: シーン拡張
-    for (let i = 2; i <= config.videoCount; i++) {
-      const extResult = await extendScene(page, config, i);
-      results.push(extResult);
-      totalTime += extResult.time;
+    // 3. 2個目以降: シーン拡張（videoCountが2以上の場合のみ）
+    if (config.videoCount >= 2) {
+      for (let i = 2; i <= config.videoCount; i++) {
+        const extResult = await extendScene(page, config, i);
+        results.push(extResult);
+        totalTime += extResult.time;
+      }
     }
 
     // 4. 最終動画をダウンロード
