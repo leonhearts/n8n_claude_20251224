@@ -381,13 +381,47 @@ async function downloadGeneratedImage(page, config) {
     outputPath = outputPath.replace('.mp4', '.png');
   }
 
-  // 方法1: 画面上の生成された画像からsrcを直接取得
-  console.error('Looking for generated image on page...');
+  // 方法1: ダウンロードボタンをクリックしてイベントを待つ（前回成功した方法）
+  console.error('Clicking download button...');
+  const downloadBtn = await page.$(SELECTORS.downloadButton);
+  if (downloadBtn) {
+    try {
+      const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
+      await downloadBtn.click();
+      console.error('Clicked download button, waiting for download event...');
+
+      const download = await downloadPromise;
+      console.error('Download started: ' + download.suggestedFilename());
+
+      const downloadUrl = download.url();
+      console.error('Download URL: ' + (downloadUrl ? downloadUrl.substring(0, 100) + '...' : 'null'));
+
+      if (downloadUrl && downloadUrl.startsWith('data:')) {
+        const matches = downloadUrl.match(/^data:([^;]+);base64,(.+)$/);
+        if (matches) {
+          const buffer = Buffer.from(matches[2], 'base64');
+          fs.writeFileSync(outputPath, buffer);
+          console.error('Image saved: ' + outputPath + ' (' + (buffer.length / 1024).toFixed(2) + 'KB)');
+          return outputPath;
+        }
+      }
+
+      // saveAsを試す
+      await download.saveAs(outputPath);
+      console.error('Image saved via saveAs: ' + outputPath);
+      return outputPath;
+    } catch (err) {
+      console.error('Download button method failed: ' + err.message);
+    }
+  }
+
+  // 方法2: 画面上の画像から直接取得（フォールバック）
+  console.error('Trying to get image from page (fallback)...');
   const images = await page.$$('img');
   console.error('Found ' + images.length + ' images on page');
 
-  // まずすべての画像のsrcをログ出力（デバッグ用）
-  for (let i = 0; i < Math.min(images.length, 10); i++) {
+  // デバッグ: 画像のsrcをログ出力
+  for (let i = 0; i < Math.min(images.length, 5); i++) {
     const src = await images[i].getAttribute('src');
     if (src) {
       console.error('  Image ' + i + ': ' + src.substring(0, 80) + (src.length > 80 ? '...' : ''));
@@ -398,11 +432,10 @@ async function downloadGeneratedImage(page, config) {
   for (const img of images) {
     const src = await img.getAttribute('src');
     if (src && src.startsWith('data:image')) {
-      console.error('Found image with data URL');
       const matches = src.match(/^data:([^;]+);base64,(.+)$/);
       if (matches) {
         const buffer = Buffer.from(matches[2], 'base64');
-        if (buffer.length > 10000) { // 10KB以上なら本物の画像
+        if (buffer.length > 10000) {
           fs.writeFileSync(outputPath, buffer);
           console.error('Image saved from page: ' + outputPath + ' (' + (buffer.length / 1024).toFixed(2) + 'KB)');
           return outputPath;
@@ -411,30 +444,11 @@ async function downloadGeneratedImage(page, config) {
     }
   }
 
-  // HTTP/HTTPS URLの画像を探す（大きい画像を探す）
-  for (const img of images) {
-    const src = await img.getAttribute('src');
-    if (src && (src.startsWith('https://') || src.startsWith('http://'))) {
-      // 画像のサイズを確認
-      const size = await img.evaluate(el => ({ width: el.naturalWidth, height: el.naturalHeight }));
-      if (size.width > 400 && size.height > 400) {
-        console.error('Found large HTTP image: ' + src.substring(0, 80) + '... (' + size.width + 'x' + size.height + ')');
-        try {
-          await downloadVideo(src, outputPath);
-          console.error('Image saved from HTTP: ' + outputPath);
-          return outputPath;
-        } catch (err) {
-          console.error('Failed to download HTTP image: ' + err.message);
-        }
-      }
-    }
-  }
-
-  // 方法2: blob URLの画像を探す
+  // blob URLの画像を探す
   for (const img of images) {
     const src = await img.getAttribute('src');
     if (src && src.startsWith('blob:')) {
-      console.error('Found image with blob URL, trying to fetch...');
+      console.error('Found blob URL, trying to fetch...');
       try {
         const dataUrl = await page.evaluate(async (imgSrc) => {
           const response = await fetch(imgSrc);
@@ -458,37 +472,6 @@ async function downloadGeneratedImage(page, config) {
       } catch (err) {
         console.error('Failed to fetch blob: ' + err.message);
       }
-    }
-  }
-
-  // 方法3: ダウンロードボタンをクリックしてイベントを待つ（フォールバック）
-  console.error('Trying download button as fallback...');
-  const downloadBtn = await page.$(SELECTORS.downloadButton);
-  if (downloadBtn) {
-    try {
-      const downloadPromise = page.waitForEvent('download', { timeout: 10000 });
-      await downloadBtn.click();
-      console.error('Clicked download button');
-
-      const download = await downloadPromise;
-      console.error('Download started: ' + download.suggestedFilename());
-
-      const downloadUrl = download.url();
-      if (downloadUrl && downloadUrl.startsWith('data:')) {
-        const matches = downloadUrl.match(/^data:([^;]+);base64,(.+)$/);
-        if (matches) {
-          const buffer = Buffer.from(matches[2], 'base64');
-          fs.writeFileSync(outputPath, buffer);
-          console.error('Image saved from download: ' + outputPath + ' (' + (buffer.length / 1024).toFixed(2) + 'KB)');
-          return outputPath;
-        }
-      }
-
-      await download.saveAs(outputPath);
-      console.error('Image saved via saveAs: ' + outputPath);
-      return outputPath;
-    } catch (err) {
-      console.error('Download button fallback failed: ' + err.message);
     }
   }
 
