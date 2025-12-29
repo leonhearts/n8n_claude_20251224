@@ -1,13 +1,21 @@
 /**
- * Veo3 ショート動画生成（シンプル版）
+ * Veo3 動画/画像生成（シンプル版）
  *
  * 既存のSUNOワークフローに組み込むための最小限のスクリプト
- * ジャケット画像から2つの動画を生成し、結合して出力
+ * - 動画モード: ジャケット画像から動画を生成し、シーン拡張して出力
+ * - 画像モード: プロンプトから画像を生成して出力
  *
  * 使用方法:
- * node veo3-shorts-simple.js '{"prompt": "プロンプト", "imagePath": "/tmp/output_kaeuta.png"}'
  *
- * 出力: /tmp/veo3_shorts_kaeuta.mp4
+ * 動画生成（フレームから動画）:
+ * node veo3-shorts-simple.js '{"mode": "frame", "prompt": "プロンプト", "imagePath": "/tmp/output_kaeuta.png"}'
+ *
+ * 画像生成:
+ * node veo3-shorts-simple.js '{"mode": "image", "prompt": "プロンプト"}'
+ *
+ * 出力:
+ * - 動画: /tmp/veo3_shorts_kaeuta.mp4
+ * - 画像: /tmp/veo3_shorts_kaeuta.png
  */
 
 const { chromium } = require('playwright');
@@ -22,7 +30,7 @@ const DEFAULT_CONFIG = {
   prompt: '',
   imagePath: '/tmp/output_kaeuta.png',
   outputPath: '/tmp/veo3_shorts_kaeuta.mp4',
-  mode: 'frame', // 'frame' または 'text'
+  mode: 'frame', // 'frame', 'text', または 'image'
   videoCount: 2,
   waitTimeout: 600000,
   cdpUrl: 'http://192.168.65.254:9222',
@@ -41,6 +49,11 @@ const SELECTORS = {
     'button:has(i:text("add_2"))',
   ],
 
+  // Videos/Images 切り替え
+  mediaTypeToggle: '[role="group"] button[role="radio"]',
+  videosButton: 'button[role="radio"]:has(i:text("videocam"))',
+  imagesButton: 'button[role="radio"]:has(i:text("image"))',
+
   // フレームから動画モード用
   modeSelector: 'button[role="combobox"]',
   frameToVideoOption: 'text=フレームから動画',
@@ -52,6 +65,9 @@ const SELECTORS = {
   fileInput: 'input[type="file"]',
   cropAndSaveButton: 'button:has-text("切り抜きして保存")',
 
+  // 画像生成モード用
+  imageCreateOption: 'text=画像を作成',
+
   // シーン拡張用セレクタ
   addToSceneButton: 'button:has-text("シーンに追加")',
   addClipButton: '#PINHOLE_ADD_CLIP_CARD_ID',
@@ -60,6 +76,10 @@ const SELECTORS = {
   // エクスポートダイアログ用
   exportDownloadLink: 'a:has-text("ダウンロード")',
   exportCloseButton: 'button:has-text("閉じる")',
+
+  // 画像ダウンロード用
+  imageDownloadButton: 'button:has(i:text("download"))',
+  generatedImage: 'img[alt*="Generated"]',
 };
 
 /**
@@ -246,6 +266,171 @@ async function selectFrameToVideoMode(page, imagePath) {
     await cropBtn.click({ force: true });
     console.error('Clicked crop and save');
     await page.waitForTimeout(2000);
+  }
+}
+
+/**
+ * 画像生成モードを選択
+ */
+async function selectImagesMode(page) {
+  console.error('Switching to Images mode...');
+
+  // Imagesボタンをクリック
+  const imagesBtn = await page.$(SELECTORS.imagesButton);
+  if (imagesBtn) {
+    const state = await imagesBtn.getAttribute('data-state');
+    if (state !== 'on') {
+      await imagesBtn.click();
+      console.error('Clicked Images button');
+      await page.waitForTimeout(1000);
+    } else {
+      console.error('Images mode already selected');
+    }
+  } else {
+    console.error('Images button not found');
+  }
+
+  // モードセレクタをクリックして「画像を作成」を選択
+  const modeBtn = await page.$(SELECTORS.modeSelector);
+  if (modeBtn) {
+    await modeBtn.click();
+    console.error('Clicked mode selector');
+    await page.waitForTimeout(500);
+
+    const imageCreateOption = await page.$(SELECTORS.imageCreateOption);
+    if (imageCreateOption) {
+      await imageCreateOption.click();
+      console.error('Selected "画像を作成"');
+      await page.waitForTimeout(500);
+    }
+  }
+}
+
+/**
+ * 画像を生成
+ */
+async function generateImage(page, config) {
+  console.error('\n=== Generating Image ===');
+
+  // 画像モードに切り替え
+  await selectImagesMode(page);
+
+  // プロンプト入力
+  const promptInput = await page.waitForSelector(SELECTORS.promptInput, { timeout: 10000 });
+  if (!promptInput) throw new Error('Prompt input not found');
+
+  await promptInput.click();
+  await promptInput.fill('');
+  await page.waitForTimeout(300);
+  await promptInput.fill(config.prompt);
+  await page.waitForTimeout(1000);
+
+  // 作成ボタンをクリック
+  let createBtn = await findElement(page, SELECTORS.createButton);
+  if (!createBtn) throw new Error('Create button not found');
+
+  // ボタンが有効になるまで待機
+  for (let i = 0; i < 10; i++) {
+    const disabled = await createBtn.getAttribute('disabled');
+    if (!disabled) break;
+    await page.waitForTimeout(500);
+    createBtn = await findElement(page, SELECTORS.createButton);
+  }
+
+  await createBtn.evaluate(el => el.click());
+  console.error('Clicked create button');
+
+  // 画像生成完了を待機
+  console.error('Waiting for image generation...');
+  let generated = false;
+  for (let i = 0; i < 120; i++) { // 最大240秒
+    await page.waitForTimeout(2000);
+
+    // 生成された画像を探す
+    const images = await page.$$('img');
+    for (const img of images) {
+      const src = await img.getAttribute('src');
+      if (src && (src.startsWith('data:image') || src.includes('generated') || src.includes('blob:'))) {
+        generated = true;
+        console.error('Image generated!');
+        break;
+      }
+    }
+    if (generated) break;
+
+    // ダウンロードボタンが表示されたら完了
+    const downloadBtn = await page.$(SELECTORS.downloadButton);
+    if (downloadBtn && await downloadBtn.isVisible()) {
+      generated = true;
+      console.error('Image generated (download button visible)!');
+      break;
+    }
+
+    if (i % 15 === 14) {
+      console.error(`  ${(i + 1) * 2}s elapsed`);
+    }
+  }
+
+  if (!generated) {
+    throw new Error('Image generation timed out');
+  }
+
+  return true;
+}
+
+/**
+ * 生成された画像をダウンロード
+ */
+async function downloadGeneratedImage(page, config) {
+  console.error('\n=== Downloading Generated Image ===');
+
+  // ダウンロードボタンをクリック
+  const downloadBtn = await page.$(SELECTORS.downloadButton);
+  if (!downloadBtn) {
+    throw new Error('Download button not found');
+  }
+
+  // Playwrightのダウンロードハンドラを設定
+  const downloadPromise = page.waitForEvent('download', { timeout: 60000 });
+  await downloadBtn.click();
+  console.error('Clicked download button');
+
+  const download = await downloadPromise;
+  console.error('Download started: ' + download.suggestedFilename());
+
+  const downloadUrl = download.url();
+  console.error('Download URL: ' + (downloadUrl ? downloadUrl.substring(0, 100) + '...' : 'null'));
+
+  // 出力パスを画像用に調整
+  let outputPath = config.outputPath;
+  if (outputPath.endsWith('.mp4')) {
+    outputPath = outputPath.replace('.mp4', '.png');
+  }
+
+  if (downloadUrl && downloadUrl.startsWith('data:')) {
+    // Base64デコード
+    console.error('Decoding Base64 data URL...');
+    const matches = downloadUrl.match(/^data:([^;]+);base64,(.+)$/);
+    if (matches) {
+      const buffer = Buffer.from(matches[2], 'base64');
+      fs.writeFileSync(outputPath, buffer);
+      console.error('Image saved: ' + outputPath + ' (' + (buffer.length / 1024).toFixed(2) + 'KB)');
+      return outputPath;
+    }
+  } else if (downloadUrl) {
+    // HTTP URLの場合
+    await downloadVideo(downloadUrl, outputPath);
+    return outputPath;
+  }
+
+  // フォールバック: saveAsを試す
+  try {
+    await download.saveAs(outputPath);
+    console.error('Image saved via saveAs: ' + outputPath);
+    return outputPath;
+  } catch (err) {
+    console.error('Download failed: ' + err.message);
+    throw err;
   }
 }
 
@@ -454,20 +639,47 @@ async function main() {
     process.exit(1);
   }
 
-  console.error('=== Veo3 Shorts Generation ===');
+  console.error('=== Veo3 Generation ===');
   console.error('Mode: ' + config.mode);
-  console.error('Image: ' + config.imagePath);
+  if (config.mode !== 'image') {
+    console.error('Image: ' + config.imagePath);
+  }
   console.error('Prompt: ' + config.prompt.substring(0, 50) + '...');
 
   let browser, page;
   const results = [];
   let totalTime = 0;
+  const startTime = Date.now();
 
   try {
     browser = await chromium.connectOverCDP(config.cdpUrl);
     const context = browser.contexts()[0];
     page = await context.newPage();
 
+    // 画像生成モードの場合
+    if (config.mode === 'image') {
+      // 1. 新しいプロジェクトを開始
+      await startNewProject(page);
+
+      // 2. 画像を生成
+      await generateImage(page, config);
+
+      // 3. 画像をダウンロード
+      const outputPath = await downloadGeneratedImage(page, config);
+
+      totalTime = Math.round((Date.now() - startTime) / 1000);
+      console.log(JSON.stringify({
+        success: true,
+        outputPath: outputPath,
+        mode: 'image',
+        totalTime: totalTime + 's'
+      }));
+
+      await page.close();
+      return;
+    }
+
+    // 動画生成モードの場合
     // 1. 新しいプロジェクトを開始（1回だけ）
     await startNewProject(page);
 
