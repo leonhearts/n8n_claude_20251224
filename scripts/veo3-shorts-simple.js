@@ -1091,6 +1091,55 @@ async function main() {
       }
     }
 
+    // 方法3: Chromeがダウンロードしたファイルを探す（Windowsダウンロードフォルダ経由）
+    if (!downloadedFile) {
+      console.error('Trying to find Chrome downloaded file (method 3)...');
+
+      // Windowsダウンロードフォルダのマウントポイント
+      const downloadDirs = [
+        '/mnt/downloads',  // docker-compose.ymlでマウントされている場合
+        '/home/node/Downloads',
+        '/tmp'
+      ];
+
+      // ダウンロード完了を待つ（最大60秒）
+      for (let wait = 0; wait < 30; wait++) {
+        await page.waitForTimeout(2000);
+
+        for (const dir of downloadDirs) {
+          try {
+            const files = fs.readdirSync(dir);
+            // 最新のmp4ファイルを探す
+            const mp4Files = files
+              .filter(f => f.endsWith('.mp4') && !f.includes('temp') && !f.includes('veo3_'))
+              .map(f => ({
+                name: f,
+                path: path.join(dir, f),
+                mtime: fs.statSync(path.join(dir, f)).mtime
+              }))
+              .sort((a, b) => b.mtime - a.mtime);  // 新しい順
+
+            if (mp4Files.length > 0) {
+              const newest = mp4Files[0];
+              const stats = fs.statSync(newest.path);
+              // 5分以内に作成され、100KB以上のファイル
+              if (Date.now() - newest.mtime.getTime() < 300000 && stats.size > 100000) {
+                console.error('Found Chrome downloaded file: ' + newest.path + ' (' + (stats.size / 1024 / 1024).toFixed(2) + 'MB)');
+                downloadedFile = newest.path;
+                break;
+              }
+            }
+          } catch (e) {}
+        }
+
+        if (downloadedFile) break;
+
+        if (wait % 10 === 9) {
+          console.error('  Waiting for Chrome download... (' + ((wait + 1) * 2) + 's)');
+        }
+      }
+    }
+
     if (!downloadedFile || !fs.existsSync(downloadedFile)) {
       throw new Error('Download failed - no file downloaded');
     }
