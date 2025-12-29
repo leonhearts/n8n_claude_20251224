@@ -307,6 +307,13 @@ docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"frame\
 | `imagePath` | ○ | `/tmp/output_kaeuta.png` | 参照画像のパス（Docker内） |
 | `videoCount` | - | `1` | シーン数（1=拡張なし、2以上=シーン拡張） |
 | `outputPath` | - | `/tmp/veo3_movie.mp4` | 出力先パス |
+| `projectUrl` | - | null | 既存プロジェクトURL（指定時は新規作成スキップ） |
+
+#### 既存プロジェクトを使用する場合
+
+```powershell
+docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"frame\", \"prompt\": \"カメラがゆっくりズームアウト\", \"imagePath\": \"/tmp/output.png\", \"projectUrl\": \"https://labs.google/fx/ja/tools/flow/project/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx\"}'
+```
 
 #### 出力
 
@@ -340,6 +347,7 @@ docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"image\
 | `imageOutputCount` | - | `1` | 出力枚数（`1` または `2`） |
 | `aspectRatio` | - | `landscape` | 縦横比（`landscape`=横向き16:9、`portrait`=縦向き9:16） |
 | `outputPath` | - | `/tmp/veo3_movie.png` | 出力先パス（.mp4指定でも.pngに変換） |
+| `projectUrl` | - | null | 既存プロジェクトURL（指定時は新規作成スキップ） |
 
 #### 出力
 
