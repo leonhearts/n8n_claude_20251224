@@ -34,6 +34,9 @@ const DEFAULT_CONFIG = {
   videoCount: 2,
   waitTimeout: 600000,
   cdpUrl: 'http://192.168.65.254:9222',
+  // 画像生成用オプション
+  imageOutputCount: 1,  // 1 または 2
+  aspectRatio: 'landscape', // 'landscape'（横向き16:9）または 'portrait'（縦向き9:16）
 };
 
 // セレクタ
@@ -67,6 +70,15 @@ const SELECTORS = {
 
   // 画像生成モード用
   imageCreateOption: 'text=画像を作成',
+
+  // 画像生成設定用
+  settingsButton: 'button:has(i:text("tune"))',
+  outputCountButton: 'button[role="combobox"]:has-text("プロンプトごとの出力")',
+  aspectRatioButton: 'button[role="combobox"]:has-text("縦横比")',
+  outputCount1Option: '[role="option"]:has-text("1")',
+  outputCount2Option: '[role="option"]:has-text("2")',
+  landscapeOption: '[role="option"]:has-text("横向き")',
+  portraitOption: '[role="option"]:has-text("縦向き")',
 
   // シーン拡張用セレクタ
   addToSceneButton: 'button:has-text("シーンに追加")',
@@ -298,6 +310,84 @@ async function selectImagesMode(page) {
 }
 
 /**
+ * 画像生成の設定を変更（出力数、縦横比）
+ */
+async function configureImageSettings(page, config) {
+  console.error('Configuring image settings...');
+
+  // 設定ボタンを探してクリック（tuneアイコン）
+  const settingsBtn = await page.$(SELECTORS.settingsButton);
+  if (settingsBtn) {
+    await settingsBtn.evaluate(el => el.click());
+    console.error('Clicked settings button');
+    await page.waitForTimeout(500);
+  }
+
+  // 縦横比の設定
+  if (config.aspectRatio) {
+    const aspectBtn = await page.$(SELECTORS.aspectRatioButton);
+    if (aspectBtn) {
+      // 現在の値を確認
+      const currentText = await aspectBtn.textContent();
+      const isLandscape = currentText.includes('横向き');
+      const needsChange = (config.aspectRatio === 'landscape' && !isLandscape) ||
+                          (config.aspectRatio === 'portrait' && isLandscape);
+
+      if (needsChange) {
+        await aspectBtn.evaluate(el => el.click());
+        console.error('Clicked aspect ratio button');
+        await page.waitForTimeout(300);
+
+        const optionSelector = config.aspectRatio === 'landscape'
+          ? SELECTORS.landscapeOption
+          : SELECTORS.portraitOption;
+        const option = await page.$(optionSelector);
+        if (option) {
+          await option.evaluate(el => el.click());
+          console.error('Selected aspect ratio: ' + config.aspectRatio);
+          await page.waitForTimeout(300);
+        }
+      } else {
+        console.error('Aspect ratio already set to: ' + config.aspectRatio);
+      }
+    }
+  }
+
+  // 出力数の設定
+  if (config.imageOutputCount) {
+    const outputBtn = await page.$(SELECTORS.outputCountButton);
+    if (outputBtn) {
+      // 現在の値を確認
+      const currentText = await outputBtn.textContent();
+      const currentCount = currentText.includes('1') && !currentText.includes('2') ? 1 : 2;
+
+      if (currentCount !== config.imageOutputCount) {
+        await outputBtn.evaluate(el => el.click());
+        console.error('Clicked output count button');
+        await page.waitForTimeout(300);
+
+        const optionSelector = config.imageOutputCount === 1
+          ? SELECTORS.outputCount1Option
+          : SELECTORS.outputCount2Option;
+        const option = await page.$(optionSelector);
+        if (option) {
+          await option.evaluate(el => el.click());
+          console.error('Selected output count: ' + config.imageOutputCount);
+          await page.waitForTimeout(300);
+        }
+      } else {
+        console.error('Output count already set to: ' + config.imageOutputCount);
+      }
+    }
+  }
+
+  // 設定パネルを閉じる（Escapeキー）
+  await page.keyboard.press('Escape');
+  await page.waitForTimeout(300);
+  console.error('Image settings configured');
+}
+
+/**
  * 画像を生成
  */
 async function generateImage(page, config) {
@@ -305,6 +395,9 @@ async function generateImage(page, config) {
 
   // 画像モードに切り替え
   await selectImagesMode(page);
+
+  // 画像生成設定を変更
+  await configureImageSettings(page, config);
 
   // プロンプト入力
   const promptInput = await page.waitForSelector(SELECTORS.promptInput, { timeout: 10000 });
