@@ -268,30 +268,44 @@ async function selectFrameToVideoMode(page, imagePath) {
 
   // 3. 既存のアップロード済み画像があれば削除
   console.error('Checking for existing uploaded images...');
-  const existingImageClose = await page.$('button:has(i.material-icons-round:text("close"))');
-  if (!existingImageClose) {
-    // 別のセレクタで試す
-    const closeButtons = await page.$$('button');
-    for (const btn of closeButtons) {
-      const iconText = await btn.$eval('i', el => el.textContent, { strict: false }).catch(() => null);
-      if (iconText && iconText.trim() === 'close') {
-        // 画像プレビュー内のcloseボタンかチェック
-        const parent = await btn.evaluate(el => {
-          const container = el.closest('[class*="image"], [class*="preview"], [class*="thumbnail"]');
-          return container ? true : false;
-        });
-        if (parent) {
-          console.error('Found existing image, removing...');
-          await btn.click({ force: true });
-          await page.waitForTimeout(1500);
-          break;
-        }
+  let existingImageRemoved = false;
+
+  // 方法1: closeテキストを含むアイコンボタンを探す
+  const allButtons = await page.$$('button');
+  console.error('  Found ' + allButtons.length + ' buttons, checking for close icons...');
+
+  for (const btn of allButtons) {
+    try {
+      // ボタン内のテキストを取得
+      const btnText = await btn.evaluate(el => el.textContent);
+      if (btnText && btnText.trim() === 'close') {
+        // 「close」だけのボタンは画像削除ボタンの可能性が高い
+        console.error('  Found button with close text, clicking...');
+        await btn.click({ force: true });
+        await page.waitForTimeout(1500);
+        existingImageRemoved = true;
+        console.error('  Existing image removed!');
+        break;
       }
+    } catch (e) {
+      // ボタンが消えた場合などは無視
     }
-  } else {
-    console.error('Found existing image close button, removing...');
-    await existingImageClose.click({ force: true });
-    await page.waitForTimeout(1500);
+  }
+
+  // 方法2: aria-labelにcloseやdeleteを含むボタン
+  if (!existingImageRemoved) {
+    const closeByAria = await page.$('button[aria-label*="close"], button[aria-label*="delete"], button[aria-label*="remove"], button[aria-label*="削除"]');
+    if (closeByAria) {
+      console.error('  Found close button by aria-label, clicking...');
+      await closeByAria.click({ force: true });
+      await page.waitForTimeout(1500);
+      existingImageRemoved = true;
+      console.error('  Existing image removed!');
+    }
+  }
+
+  if (!existingImageRemoved) {
+    console.error('  No existing image found to remove');
   }
 
   // 4. 画像追加のプラスボタンをクリック
