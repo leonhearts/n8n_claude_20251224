@@ -266,7 +266,16 @@ async function selectFrameToVideoMode(page, imagePath) {
     }
   }
 
-  // 3. 既存のアップロード済み画像があれば削除
+  // 3. 画像追加のプラスボタンをクリック
+  const addImgBtn = await page.$(SELECTORS.addImageButton);
+  if (addImgBtn) {
+    // JavaScriptで直接クリック（Playwrightのクリックがオーバーレイでブロックされる場合の対策）
+    await addImgBtn.evaluate(el => el.click());
+    console.error('Clicked add image button (via JS)');
+    await page.waitForTimeout(2000);
+  }
+
+  // 4. 既存のアップロード済み画像があれば削除（addImageクリック後に表示される）
   console.error('Checking for existing uploaded images...');
   let existingImageRemoved = false;
 
@@ -305,16 +314,7 @@ async function selectFrameToVideoMode(page, imagePath) {
   }
 
   if (!existingImageRemoved) {
-    console.error('  No existing image found to remove');
-  }
-
-  // 4. 画像追加のプラスボタンをクリック
-  const addImgBtn = await page.$(SELECTORS.addImageButton);
-  if (addImgBtn) {
-    // JavaScriptで直接クリック（Playwrightのクリックがオーバーレイでブロックされる場合の対策）
-    await addImgBtn.evaluate(el => el.click());
-    console.error('Clicked add image button (via JS)');
-    await page.waitForTimeout(2000);
+    console.error('  No existing image found to remove (proceeding with upload)');
   }
 
   // 5. アップロードボタンをクリックしてファイルダイアログでファイルを設定
