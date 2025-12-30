@@ -266,7 +266,35 @@ async function selectFrameToVideoMode(page, imagePath) {
     }
   }
 
-  // 3. 画像追加のプラスボタンをクリック
+  // 3. 既存のアップロード済み画像があれば削除
+  console.error('Checking for existing uploaded images...');
+  const existingImageClose = await page.$('button:has(i.material-icons-round:text("close"))');
+  if (!existingImageClose) {
+    // 別のセレクタで試す
+    const closeButtons = await page.$$('button');
+    for (const btn of closeButtons) {
+      const iconText = await btn.$eval('i', el => el.textContent, { strict: false }).catch(() => null);
+      if (iconText && iconText.trim() === 'close') {
+        // 画像プレビュー内のcloseボタンかチェック
+        const parent = await btn.evaluate(el => {
+          const container = el.closest('[class*="image"], [class*="preview"], [class*="thumbnail"]');
+          return container ? true : false;
+        });
+        if (parent) {
+          console.error('Found existing image, removing...');
+          await btn.click({ force: true });
+          await page.waitForTimeout(1500);
+          break;
+        }
+      }
+    }
+  } else {
+    console.error('Found existing image close button, removing...');
+    await existingImageClose.click({ force: true });
+    await page.waitForTimeout(1500);
+  }
+
+  // 4. 画像追加のプラスボタンをクリック
   const addImgBtn = await page.$(SELECTORS.addImageButton);
   if (addImgBtn) {
     // JavaScriptで直接クリック（Playwrightのクリックがオーバーレイでブロックされる場合の対策）
@@ -275,7 +303,7 @@ async function selectFrameToVideoMode(page, imagePath) {
     await page.waitForTimeout(2000);
   }
 
-  // 4. アップロードボタンをクリックしてファイルダイアログでファイルを設定
+  // 5. アップロードボタンをクリックしてファイルダイアログでファイルを設定
   console.error('Looking for upload button...');
 
   // ファイルダイアログハンドラを設定（開いたらファイルを設定）
@@ -309,7 +337,7 @@ async function selectFrameToVideoMode(page, imagePath) {
     console.error('Upload button not found');
   }
 
-  // 5. fileChooserで設定できなかった場合、file inputを探す
+  // 6. fileChooserで設定できなかった場合、file inputを探す
   if (!fileUploaded) {
     console.error('Looking for file input (fallback)...');
     await page.waitForTimeout(1000);
@@ -328,7 +356,7 @@ async function selectFrameToVideoMode(page, imagePath) {
     }
   }
 
-  // 6. 「切り抜きして保存」ボタンをクリック
+  // 7. 「切り抜きして保存」ボタンをクリック
   const cropBtn = await page.$(SELECTORS.cropAndSaveButton);
   if (cropBtn) {
     await cropBtn.click({ force: true });
@@ -993,18 +1021,33 @@ async function main() {
 
           // hrefが設定されるまで待機（エクスポート完了を待つ）
           // waitTimeoutを使用（デフォルト600秒 = 10分）
+          // ただしnullが30回（60秒）続いたらダウンロードクリック方式に移行
           const maxHrefChecks = Math.max(30, Math.floor(config.waitTimeout / 2000));
           let href = null;
+          let nullCount = 0;
+          const maxNullCount = 30; // nullが30回続いたら諦める（60秒）
           for (let j = 0; j < maxHrefChecks; j++) {
             href = await downloadLink.getAttribute('href');
             if (j % 10 === 0 || (href && (href.startsWith('http') || href.startsWith('data:') || href.startsWith('blob:')))) {
-              console.error('  href check ' + j + '/' + maxHrefChecks + ': ' + (href ? href.substring(0, 80) + '...' : 'null'));
+              console.error('  href check ' + j + '/' + maxHrefChecks + ': ' + (href ? href.substring(0, 80) + '...' : 'null') + ' (nullCount: ' + nullCount + ')');
             }
 
             if (href && (href.startsWith('http') || href.startsWith('data:') || href.startsWith('blob:'))) {
               console.error('  href is ready!');
               break;
             }
+
+            // nullが続く場合のカウント
+            if (!href || href === '' || href === 'javascript:void(0)') {
+              nullCount++;
+              if (nullCount >= maxNullCount) {
+                console.error('  href stayed null for ' + nullCount + ' checks (' + (nullCount * 2) + 's), proceeding to click download...');
+                break;
+              }
+            } else {
+              nullCount = 0; // 何か値があればリセット
+            }
+
             await page.waitForTimeout(2000);
           }
 
