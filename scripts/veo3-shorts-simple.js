@@ -966,13 +966,17 @@ async function main() {
       // 2. 画像を生成
       await generateImage(page, config);
 
-      // 3. 画像をダウンロード
+      // 3. 画像をダウンロード（動画生成で使うため常に保存）
       const outputPath = await downloadGeneratedImage(page, config);
+
+      // 4. プロジェクトURLを取得
+      const projectUrl = page.url();
 
       totalTime = Math.round((Date.now() - startTime) / 1000);
       console.log(JSON.stringify({
         success: true,
         outputPath: outputPath,
+        projectUrl: projectUrl,
         mode: 'image',
         totalTime: totalTime + 's'
       }));
