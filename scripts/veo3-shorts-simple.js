@@ -324,6 +324,18 @@ async function selectFrameToVideoMode(page, imagePath) {
 
   if (!existingImageRemoved) {
     console.error('  No existing image found to remove (proceeding with upload)');
+  } else {
+    // 既存画像を削除した場合、再度addボタンをクリックしてアップロードダイアログを開く
+    console.error('  Clicking add button again after removing existing image...');
+    const addIcon = await page.$('i.google-symbols');
+    if (addIcon) {
+      const iconText = await addIcon.evaluate(el => el.textContent);
+      if (iconText && iconText.trim() === 'add') {
+        await addIcon.evaluate(el => el.parentElement.click());
+        console.error('  Clicked add button');
+        await page.waitForTimeout(2000);
+      }
+    }
   }
 
   // 5. アップロードボタンをクリックしてファイルダイアログでファイルを設定
