@@ -3,7 +3,7 @@
 ## 概要
 
 スプレッドシートから1行ずつ読み込み、最大16シーン（画像→動画ペア）を連続生成するワークフロー。
-1つのプロジェクトURLを再利用し、シーンビルダーに複数シーンを蓄積。最終シーンのみダウンロード。
+1つのプロジェクトURLを再利用し、シーンビルダーに複数シーンを蓄積。最終シーンのみダウンロード後、Google Driveに保存。
 
 ## スプレッドシート構造
 
@@ -11,17 +11,18 @@
 | 列名 | 説明 |
 |------|------|
 | status | 処理状態 (Plan/Processing/Completed/Error) |
+| drive_url | 最終動画のGoogle Drive URL（自動入力） |
+| projectUrl | Veo3プロジェクトURL（自動入力） |
 | search_url | 元動画URL |
 | search_keyword | 検索キーワード |
 | upload_time | アップロード予定時刻 |
-| image_prompt1〜16 | 画像生成プロンプト（最大16個） |
-| video_prompt1〜16 | 動画生成プロンプト（最大16個） |
-| title | YouTube用タイトル |
+| youtube_title | YouTube用タイトル |
 | youtube_text | YouTube説明文 |
 | youtube_time | YouTube投稿時間 |
 | twitter_status | Twitter投稿状態 |
 | twitter_text | Twitter投稿テキスト |
-| project_url | Veo3プロジェクトURL（自動入力） |
+| image_prompt1〜16 | 画像生成プロンプト（最大16個） |
+| video_prompt1〜16 | 動画生成プロンプト（最大16個） |
 ```
 
 ## フロー図
@@ -53,9 +54,15 @@
 └─────────────────────────────────────────────────────────────────────┘
                               ↓
 ┌─────────────────────────────────────────────────────────────────────┐
-│  5. 完了処理                                                         │
+│  5. Google Driveに動画をアップロード                                  │
+│     - /tmp/veo3_final.mp4 をDriveにアップロード                       │
+│     - アップロードしたファイルのURLを取得                              │
+└─────────────────────────────────────────────────────────────────────┘
+                              ↓
+┌─────────────────────────────────────────────────────────────────────┐
+│  6. 完了処理                                                         │
+│     - drive_url にGoogle Drive URLを記録                             │
 │     - status を "Completed" に更新                                   │
-│     - 最終動画パスを記録                                              │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -324,19 +331,47 @@ return [{
 }];
 ```
 
-### Phase 4: 完了処理
+### Phase 4: Google Drive アップロード
 
-#### 4-1. Merge (Wait for all items)
+#### 4-1. IF - Check If Last Scene
 ```
-Mode: Merge by position
+Condition: {{ $json.completed }} === true
+True → Continue to Drive upload
+False → Loop back (should not happen if flow is correct)
 ```
 
-#### 4-2. Google Sheets - Update Status to Completed
+#### 4-2. Google Drive - Upload Video
+```
+Operation: Upload
+File Name: veo3_{{ $now.format('yyyyMMdd_HHmmss') }}.mp4
+File Path: /tmp/veo3_final.mp4
+Parent Folder: (指定のフォルダID)
+```
+
+#### 4-3. Code - Get Drive URL
+```javascript
+const fileId = $input.first().json.id;
+const driveUrl = 'https://drive.google.com/file/d/' + fileId + '/view';
+
+return [{
+  json: {
+    driveUrl: driveUrl,
+    fileId: fileId,
+    projectUrl: $('Parse Loop Video Result').item.json.projectUrl,
+    rowIndex: $('Parse Loop Video Result').item.json.rowIndex
+  }
+}];
+```
+
+### Phase 5: 完了処理
+
+#### 5-1. Google Sheets - Update Row with Results
 ```
 Operation: Update row
 Row: {{ $json.rowIndex }}
-Column: status
-Value: Completed
+Updates:
+  - Column: status → Completed
+  - Column: drive_url → {{ $json.driveUrl }}
 ```
 
 ## 実行パラメータまとめ
@@ -347,11 +382,30 @@ Value: Completed
 | 最初の動画 | frame | 取得したURL | isLast | - |
 | ループ画像 | image | 再利用 | - | /tmp/veo3_scene.png（上書き） |
 | ループ動画 | frame | 再利用 | isLast | /tmp/veo3_final.mp4 |
+| Driveアップロード | - | - | - | /tmp/veo3_final.mp4 → Drive |
 
 **重要:**
 - 画像は常に `/tmp/veo3_scene.png` に保存（毎回上書き）
 - 動画ダウンロードは最後のシーンのみ（`isLast: true`）
 - projectUrlは最初の画像生成時に取得し、以降再利用
+- 最終動画は Google Drive にアップロードし、URLをスプレッドシートに記録
+
+## データフロー
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│  スプレッドシート                                                     │
+│  ┌─────────┬───────────────────────────┬──────────────────────────┐ │
+│  │ status  │ drive_url                 │ projectUrl               │ │
+│  ├─────────┼───────────────────────────┼──────────────────────────┤ │
+│  │ Plan    │ (空)                      │ (空)                     │ │
+│  │    ↓    │                           │                          │ │
+│  │Processing│ (空)                      │ https://labs.google/...  │ │ ← 画像生成後
+│  │    ↓    │                           │                          │ │
+│  │Completed│ https://drive.google/...  │ https://labs.google/...  │ │ ← 完了後
+│  └─────────┴───────────────────────────┴──────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
 ## エラーハンドリング
 
@@ -397,5 +451,6 @@ Value: Completed
 
 ## 更新履歴
 
+- **2025-12-30**: Google Driveアップロード機能追加、drive_url/projectUrl列の追加、データフロー図追加
 - **2025-12-30**: 実際のスプレッドシート構造に合わせて設計書を大幅改訂
 - **2025-12-30**: 初版作成
