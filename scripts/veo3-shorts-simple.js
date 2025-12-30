@@ -39,6 +39,8 @@ const DEFAULT_CONFIG = {
   // 画像生成用オプション
   imageOutputCount: 1,  // 1 または 2
   aspectRatio: 'landscape', // 'landscape'（横向き16:9）または 'portrait'（縦向き9:16）
+  // ダウンロード制御（n8n連携用）
+  download: true,  // true: 動画をダウンロード、false: ダウンロードせずプロジェクトURLのみ返す
 };
 
 // セレクタ
@@ -997,7 +999,25 @@ async function main() {
       }
     }
 
-    // 4. 最終動画をダウンロード
+    // 4. 最終動画をダウンロード（config.download = true の場合のみ）
+    if (!config.download) {
+      // ダウンロードしない場合はプロジェクトURLを返して終了
+      const projectUrl = page.url();
+      console.error('\n=== Skipping download (download: false) ===');
+      console.error('Project URL: ' + projectUrl);
+
+      await page.close();
+
+      console.log(JSON.stringify({
+        success: true,
+        projectUrl: projectUrl,
+        videoCount: config.videoCount,
+        totalTime: totalTime + 's',
+        downloaded: false
+      }));
+      process.exit(0);
+    }
+
     console.error('\n=== Downloading final video ===');
 
     const tempPath = '/tmp/veo3_combined_temp.mp4';
@@ -1249,13 +1269,16 @@ async function main() {
 
     console.error('Output: ' + config.outputPath);
 
+    const finalProjectUrl = page.url();
     await page.close();
 
     console.log(JSON.stringify({
       success: true,
       outputPath: config.outputPath,
+      projectUrl: finalProjectUrl,
       videoCount: config.videoCount,
-      totalTime: totalTime + 's'
+      totalTime: totalTime + 's',
+      downloaded: true
     }));
     process.exit(0);
 

@@ -11,6 +11,7 @@ Google Veo3/Imagen3を使用して、動画や画像を自動生成するスク�
 - [共通パラメータ](#共通パラメータ)
 - [ローカルへのダウンロード](#ローカルへのダウンロード)
 - [ワークフロー統合](#sunoワークフロー統合)
+- [技術的解説](#技術的解説)
 - [トラブルシューティング](#トラブルシューティング)
 
 ---
@@ -135,6 +136,42 @@ docker cp n8n-n8n-1:/tmp/veo3_movie.jpg C:\Users\Administrator\Downloads\generat
 |-----------|-----------|------|
 | `cdpUrl` | `http://192.168.65.254:9222` | Chrome CDP接続先 |
 | `waitTimeout` | `600000` | 生成待ち最大時間（ミリ秒） |
+| `download` | `true` | ダウンロード制御（`false`でダウンロードスキップ） |
+
+### download パラメータ（n8n連携向け）
+
+n8nワークフローで段階的に処理する場合、途中のダウンロードは不要なことがあります。
+
+```powershell
+# ダウンロードあり（デフォルト）
+docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"frame\", \"prompt\": \"test\", \"imagePath\": \"/tmp/test.png\", \"download\": true}'
+
+# ダウンロードなし（プロジェクトURLのみ返す）
+docker exec n8n-n8n-1 node /home/node/veo3-shorts-simple.js '{\"mode\": \"frame\", \"prompt\": \"test\", \"imagePath\": \"/tmp/test.png\", \"download\": false}'
+```
+
+**出力の違い:**
+
+```json
+// download: true の場合
+{
+  "success": true,
+  "outputPath": "/tmp/veo3_movie.mp4",
+  "projectUrl": "https://labs.google/fx/ja/tools/flow/project/xxx",
+  "videoCount": 1,
+  "totalTime": "120s",
+  "downloaded": true
+}
+
+// download: false の場合
+{
+  "success": true,
+  "projectUrl": "https://labs.google/fx/ja/tools/flow/project/xxx",
+  "videoCount": 1,
+  "totalTime": "85s",
+  "downloaded": false
+}
+```
 
 ---
 
@@ -233,6 +270,111 @@ fi
 
 ---
 
+## 技術的解説
+
+このセクションでは、スクリプトの内部動作と実装上の工夫を説明します。
+
+### Chrome CDP接続アーキテクチャ
+
+```
+┌─────────────────┐     CDP      ┌──────────────────────────┐
+│  Docker (n8n)   │ ←─────────→ │  Windows Chrome          │
+│  192.168.65.254 │   Port 9222  │  --remote-debugging-port │
+└─────────────────┘              └──────────────────────────┘
+```
+
+- **Playwright `connectOverCDP()`**: 既存のChromeセッションに接続
+- **Docker→Windows通信**: `192.168.65.254:9222` を使用（`host.docker.internal`は動作しない）
+
+### 既存画像の自動削除メカニズム
+
+`projectUrl`で既存プロジェクトを使用する場合、以前アップロードした画像が残っていることがあります。
+
+**問題:** 既存画像があると新しい画像がアップロードできない
+
+**解決策:** 以下の順序で既存画像を検出・削除
+
+```javascript
+// 1. addボタンをクリック（これで削除ボタンが表示される）
+await addImgBtn.click();
+
+// 2. google-symbolsアイコンから"close"を探す
+const closeIcons = await page.$$('i.google-symbols');
+for (const icon of closeIcons) {
+  const text = await icon.evaluate(el => el.textContent);
+  if (text.trim() === 'close') {
+    // 親divをクリックして削除
+    await icon.evaluate(el => el.parentElement.click());
+    break;
+  }
+}
+
+// 3. 再度addボタンをクリックしてアップロードダイアログを開く
+// （削除した場合のみ必要）
+```
+
+**HTMLの構造:**
+```html
+<!-- 削除ボタン -->
+<div class="..."><i class="google-symbols">close</i></div>
+
+<!-- 追加ボタン -->
+<button class="..."><i class="google-symbols">add</i></button>
+```
+
+注意: `<button>`要素ではなく`<div>`+`<i>`構造のため、`i.google-symbols`で検索する必要がある
+
+### ダウンロード処理の最適化
+
+**問題:** `--remote-debugging-address=0.0.0.0`使用時、Chromeのダウンロードマネージャーが正常動作しない
+
+**解決策:** 3段階のフォールバック
+
+```
+方法1: Playwrightダウンロードイベント
+  ↓ 失敗時
+方法2: エクスポートダイアログのhref取得
+  ↓ href取得タイムアウト（60秒）
+方法3: ダウンロードリンクをクリックしてBase64デコード
+```
+
+**href早期終了:**
+```javascript
+// hrefがnullのまま30回（60秒）続いたら諦める
+let nullCount = 0;
+for (let j = 0; j < maxHrefChecks; j++) {
+  href = await downloadLink.getAttribute('href');
+  if (!href) {
+    nullCount++;
+    if (nullCount >= 30) {
+      console.error('href stayed null, proceeding to click download...');
+      break;
+    }
+  }
+}
+```
+
+以前は300回（600秒）待機していたが、hrefが設定されない場合は60秒でクリック方式に移行するよう最適化。
+
+### n8nワークフロー統合のベストプラクティス
+
+複数のシーンを生成する場合、途中でダウンロードする必要はありません。
+
+**推奨フロー:**
+```
+1. 画像生成 (download: false) → projectUrl取得
+2. シーン1生成 (download: false, projectUrl使用) → projectUrl継続
+3. シーン2生成 (download: false, projectUrl使用) → projectUrl継続
+4. 最終シーン生成 (download: true, projectUrl使用) → 動画ダウンロード
+```
+
+これにより：
+- 中間ダウンロードのオーバーヘッドを削減
+- プロジェクトURLで状態を引き継ぎ
+- 最終的な完成動画のみをダウンロード
+
+---
+
 ## トラブルシューティング
 
 ### CDP接続URLは `192.168.65.254:9222` を使用
@@ -290,6 +432,7 @@ PowerShellでのコマンド実行時、JSONの形式に注意してください
 
 ## 更新履歴
 
+- **2025-12-30**: downloadパラメータ追加（n8n連携向け）、既存画像自動削除機能、href早期終了最適化、技術的解説セクション追加
 - **2025-12-29**: 画像生成モード追加（出力数・縦横比設定対応）、動画生成のvideoCount=1でシーン拡張スキップ、projectUrl対応
 - **2025-12-29**: Base64ダウンロード対応、シーンビルダー遷移修正
 - **2025-12-28**: 初版作成
