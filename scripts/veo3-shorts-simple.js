@@ -279,37 +279,46 @@ async function selectFrameToVideoMode(page, imagePath) {
   console.error('Checking for existing uploaded images...');
   let existingImageRemoved = false;
 
-  // 方法1: closeテキストを含むアイコンボタンを探す
-  const allButtons = await page.$$('button');
-  console.error('  Found ' + allButtons.length + ' buttons, checking for close icons...');
+  // 方法1: google-symbolsクラスの<i>要素で「close」テキストを持つものを探す
+  // HTML例: <div class="..."><i class="google-symbols ...">close</i></div>
+  const closeIcons = await page.$$('i.google-symbols');
+  console.error('  Found ' + closeIcons.length + ' google-symbols icons...');
 
-  for (const btn of allButtons) {
+  for (const icon of closeIcons) {
     try {
-      // ボタン内のテキストを取得
-      const btnText = await btn.evaluate(el => el.textContent);
-      if (btnText && btnText.trim() === 'close') {
-        // 「close」だけのボタンは画像削除ボタンの可能性が高い
-        console.error('  Found button with close text, clicking...');
-        await btn.click({ force: true });
+      const iconText = await icon.evaluate(el => el.textContent);
+      if (iconText && iconText.trim() === 'close') {
+        console.error('  Found close icon, clicking parent div...');
+        // 親要素（div）をクリック
+        await icon.evaluate(el => el.parentElement.click());
         await page.waitForTimeout(1500);
         existingImageRemoved = true;
         console.error('  Existing image removed!');
         break;
       }
     } catch (e) {
-      // ボタンが消えた場合などは無視
+      // 要素が消えた場合などは無視
     }
   }
 
-  // 方法2: aria-labelにcloseやdeleteを含むボタン
+  // 方法2: テキストが「close」の<i>要素を直接探す
   if (!existingImageRemoved) {
-    const closeByAria = await page.$('button[aria-label*="close"], button[aria-label*="delete"], button[aria-label*="remove"], button[aria-label*="削除"]');
-    if (closeByAria) {
-      console.error('  Found close button by aria-label, clicking...');
-      await closeByAria.click({ force: true });
-      await page.waitForTimeout(1500);
-      existingImageRemoved = true;
-      console.error('  Existing image removed!');
+    const allIcons = await page.$$('i');
+    console.error('  Checking ' + allIcons.length + ' <i> elements...');
+    for (const icon of allIcons) {
+      try {
+        const iconText = await icon.evaluate(el => el.textContent);
+        if (iconText && iconText.trim() === 'close') {
+          console.error('  Found <i>close</i>, clicking...');
+          await icon.click({ force: true });
+          await page.waitForTimeout(1500);
+          existingImageRemoved = true;
+          console.error('  Existing image removed!');
+          break;
+        }
+      } catch (e) {
+        // 要素が消えた場合などは無視
+      }
     }
   }
 
