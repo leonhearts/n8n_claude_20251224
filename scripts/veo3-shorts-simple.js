@@ -327,12 +327,28 @@ async function selectFrameToVideoMode(page, imagePath) {
   } else {
     // 既存画像を削除した場合、再度addボタンをクリックしてアップロードダイアログを開く
     console.error('  Clicking add button again after removing existing image...');
-    const addIcon = await page.$('i.google-symbols');
-    if (addIcon) {
-      const iconText = await addIcon.evaluate(el => el.textContent);
-      if (iconText && iconText.trim() === 'add') {
-        await addIcon.evaluate(el => el.parentElement.click());
-        console.error('  Clicked add button');
+    const allIcons = await page.$$('i.google-symbols');
+    let addClicked = false;
+    for (const icon of allIcons) {
+      try {
+        const iconText = await icon.evaluate(el => el.textContent);
+        if (iconText && iconText.trim() === 'add') {
+          await icon.evaluate(el => el.parentElement.click());
+          console.error('  Clicked add button');
+          await page.waitForTimeout(2000);
+          addClicked = true;
+          break;
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    if (!addClicked) {
+      console.error('  Could not find add button, trying SELECTORS.addImageButton...');
+      const addBtn = await page.$(SELECTORS.addImageButton);
+      if (addBtn) {
+        await addBtn.evaluate(el => el.click());
+        console.error('  Clicked add image button via selector');
         await page.waitForTimeout(2000);
       }
     }
