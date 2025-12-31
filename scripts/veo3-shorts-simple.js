@@ -606,20 +606,11 @@ async function generateImage(page, config) {
   for (let i = 0; i < 120; i++) { // 最大240秒
     await page.waitForTimeout(2000);
 
-    // エラーメッセージをチェック（「生成できませんでした」など）
-    const errorMessages = await page.$$eval('*', els =>
-      els.filter(el => {
-        const text = el.innerText || '';
-        return text.includes('生成できませんでした') ||
-               text.includes('Could not generate') ||
-               text.includes('generation failed') ||
-               text.includes('エラー');
-      }).map(el => el.innerText.substring(0, 100))
-    );
-
-    if (errorMessages.length > 0) {
-      console.error('Image generation error detected: ' + errorMessages[0]);
-      throw new Error('Image generation failed: ' + errorMessages[0]);
+    // エラーメッセージをチェック（「生成できませんでした」のみ - 誤検出防止）
+    const pageText = await page.evaluate(() => document.body.innerText);
+    if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
+      console.error('Generation error detected on page');
+      throw new Error('Image generation failed: 生成できませんでした');
     }
 
     // 生成された画像を探す
@@ -844,20 +835,11 @@ async function generateVideo(page, config, index) {
 
     await dismissNotifications(page);
 
-    // エラーメッセージをチェック（「生成できませんでした」など）
-    const errorMessages = await page.$$eval('*', els =>
-      els.filter(el => {
-        const text = el.innerText || '';
-        return text.includes('生成できませんでした') ||
-               text.includes('Could not generate') ||
-               text.includes('generation failed') ||
-               text.includes('エラー');
-      }).map(el => el.innerText.substring(0, 100))
-    );
-
-    if (errorMessages.length > 0) {
-      console.error('Generation error detected: ' + errorMessages[0]);
-      throw new Error('Video generation failed: ' + errorMessages[0]);
+    // エラーメッセージをチェック（「生成できませんでした」のみ - 誤検出防止）
+    const pageText = await page.evaluate(() => document.body.innerText);
+    if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
+      console.error('Generation error detected on page');
+      throw new Error('Video generation failed: 生成できませんでした');
     }
 
     // 「シーンに追加」ボタンが表示されたら動画生成完了
