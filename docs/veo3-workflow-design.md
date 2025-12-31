@@ -345,7 +345,7 @@ False → Loop back (should not happen if flow is correct)
 Operation: Upload
 File Name: veo3_{{ $now.format('yyyyMMdd_HHmmss') }}.mp4
 File Path: /tmp/veo3_final.mp4
-Parent Folder: (指定のフォルダID)
+Parent Folder: 1lpyK2P7_mbMzQ74IkA2f4leDnuHs7CO_
 ```
 
 #### 4-3. Code - Get Drive URL
@@ -422,6 +422,42 @@ Updates:
 // Error Workflow
 // statusを "Error" に更新
 // エラーメッセージをerror_message列に記録
+```
+
+### Discord通知（エラー時）
+```json
+{
+  "parameters": {
+    "authentication": "webhook",
+    "content": "=❌ Veo3 Workflow Error\n\nRow: {{ $json.rowIndex }}\nError: {{ $json.error }}",
+    "options": {}
+  },
+  "type": "n8n-nodes-base.discord",
+  "credentials": {
+    "discordWebhookApi": {
+      "id": "rt0K8qLyVG6wH6wB",
+      "name": "Discord Webhook account"
+    }
+  }
+}
+```
+
+### Discord通知（成功時）
+```json
+{
+  "parameters": {
+    "authentication": "webhook",
+    "content": "=✅ Veo3 Workflow Complete\n\nScenes: {{ $json.totalScenes }}\nDrive URL: {{ $json.driveUrl }}",
+    "options": {}
+  },
+  "type": "n8n-nodes-base.discord",
+  "credentials": {
+    "discordWebhookApi": {
+      "id": "rt0K8qLyVG6wH6wB",
+      "name": "Discord Webhook account"
+    }
+  }
+}
 ```
 
 ## タイムアウト設定
