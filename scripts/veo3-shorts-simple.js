@@ -210,7 +210,17 @@ async function findElement(page, selectors) {
  */
 async function startNewProject(page, config) {
   // プロジェクトURLが指定されている場合はそのURLに直接アクセス
-  const targetUrl = config.projectUrl || 'https://labs.google/fx/tools/flow';
+  let targetUrl = config.projectUrl || 'https://labs.google/fx/tools/flow';
+
+  // SceneBuilder URL (/scenes/を含む) の場合、ベースプロジェクトURLに変換
+  if (targetUrl.includes('/scenes/')) {
+    const baseUrl = targetUrl.replace(/\/scenes\/.*$/, '');
+    console.error('SceneBuilder URL detected, converting to project URL:');
+    console.error('  From: ' + targetUrl);
+    console.error('  To: ' + baseUrl);
+    targetUrl = baseUrl;
+  }
+
   console.error('Opening: ' + targetUrl);
 
   await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
@@ -219,6 +229,15 @@ async function startNewProject(page, config) {
   // ログインチェック
   if (page.url().includes('accounts.google.com')) {
     throw new Error('Not logged in');
+  }
+
+  // 現在のURLを確認（SceneBuilderに自動リダイレクトされた場合）
+  const currentUrl = page.url();
+  if (currentUrl.includes('/scenes/')) {
+    console.error('Redirected to SceneBuilder, navigating back to project...');
+    const projectBaseUrl = currentUrl.replace(/\/scenes\/.*$/, '');
+    await page.goto(projectBaseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForTimeout(3000);
   }
 
   // ファイルダイアログが開いていたら閉じる
@@ -424,25 +443,45 @@ async function selectFrameToVideoMode(page, imagePath) {
 async function selectImagesMode(page) {
   console.error('Switching to Images mode...');
 
-  // Imagesボタンをクリック（JSクリック使用）
-  const imagesBtn = await page.$(SELECTORS.imagesButton);
-  if (imagesBtn) {
-    const state = await imagesBtn.getAttribute('data-state');
-    if (state !== 'on') {
-      await imagesBtn.evaluate(el => el.click());
-      console.error('Clicked Images button (via JS)');
-      await page.waitForTimeout(1000);
-    } else {
-      console.error('Images mode already selected');
-      // 既にImagesモードなら、セレクタ操作は不要
-      return;
-    }
-  } else {
-    console.error('Images button not found');
+  // 現在のURLをチェック - SceneBuilderにいる場合はエラー
+  const currentUrl = page.url();
+  if (currentUrl.includes('/scenes/')) {
+    throw new Error('Cannot switch to Images mode while in SceneBuilder. Current URL: ' + currentUrl);
   }
 
-  // Imagesモードに切り替えた後は、デフォルトで「画像を作成」が選択されるはずなので
-  // セレクタ操作は不要（操作するとドロップダウンが開いて入力ができなくなる）
+  // Imagesボタンを探す（リトライあり）
+  let imagesBtn = null;
+  for (let i = 0; i < 5; i++) {
+    imagesBtn = await page.$(SELECTORS.imagesButton);
+    if (imagesBtn) break;
+    console.error('Images button not found, waiting... (' + (i + 1) + '/5)');
+    await page.waitForTimeout(2000);
+  }
+
+  if (!imagesBtn) {
+    // ページの状態をログ出力してデバッグ
+    const bodyText = await page.evaluate(() => document.body.innerText.substring(0, 500));
+    console.error('Page content preview: ' + bodyText);
+    throw new Error('Images button not found after 5 attempts. Page may not be in the correct state.');
+  }
+
+  const state = await imagesBtn.getAttribute('data-state');
+  if (state !== 'on') {
+    await imagesBtn.evaluate(el => el.click());
+    console.error('Clicked Images button (via JS)');
+    await page.waitForTimeout(1500);
+
+    // クリック後に再度状態を確認
+    const newState = await imagesBtn.getAttribute('data-state');
+    if (newState !== 'on') {
+      console.error('Warning: Images button state did not change to "on" after click');
+    } else {
+      console.error('Images mode activated successfully');
+    }
+  } else {
+    console.error('Images mode already selected');
+  }
+
   await page.waitForTimeout(500);
 }
 
