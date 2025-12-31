@@ -345,7 +345,7 @@ False → Loop back (should not happen if flow is correct)
 Operation: Upload
 File Name: veo3_{{ $now.format('yyyyMMdd_HHmmss') }}.mp4
 File Path: /tmp/veo3_final.mp4
-Parent Folder: 1lpyK2P7_mbMzQ74IkA2f4leDnuHs7CO_
+Parent Folder: (n8nで設定)
 ```
 
 #### 4-3. Code - Get Drive URL
