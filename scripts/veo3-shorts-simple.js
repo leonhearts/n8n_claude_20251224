@@ -674,22 +674,38 @@ async function downloadGeneratedImage(page, config) {
     }
   }
 
-  // HTTP/HTTPS URLの画像を探す（Google Storage等）
+  // HTTP/HTTPS URLの画像を探す（Google Storage、lh3.googleusercontent.com等）
   for (const img of images) {
     const src = await img.getAttribute('src');
-    if (src && src.includes('storage.googleapis.com') && src.includes('videofx')) {
-      console.error('Found Google Storage image: ' + src.substring(0, 80) + '...');
+    if (!src) continue;
+
+    // Google関連の画像URLをチェック（生成された画像は通常大きいサイズ）
+    const isGoogleImage = src.includes('storage.googleapis.com') ||
+                          src.includes('lh3.googleusercontent.com/gg/') ||
+                          src.includes('lh3.google.com');
+
+    if (isGoogleImage && !src.includes('/a/ACg8oc')) { // プロフィール画像を除外
+      console.error('Found Google image: ' + src.substring(0, 80) + '...');
       try {
+        // 画像サイズをチェック（小さい画像はスキップ）
+        const size = await img.evaluate(el => ({ width: el.naturalWidth, height: el.naturalHeight }));
+        console.error('  Size: ' + size.width + 'x' + size.height);
+
+        if (size.width < 200 || size.height < 200) {
+          console.error('  Skipping (too small)');
+          continue;
+        }
+
         // 拡張子を適切に設定
         let imgOutputPath = outputPath;
         if (src.includes('.jpg') || src.includes('.jpeg')) {
           imgOutputPath = outputPath.replace('.png', '.jpg');
         }
         await downloadVideo(src, imgOutputPath);
-        console.error('Image saved from Google Storage: ' + imgOutputPath);
+        console.error('Image saved from Google: ' + imgOutputPath);
         return imgOutputPath;
       } catch (err) {
-        console.error('Failed to download from Google Storage: ' + err.message);
+        console.error('Failed to download from Google: ' + err.message);
       }
     }
   }
