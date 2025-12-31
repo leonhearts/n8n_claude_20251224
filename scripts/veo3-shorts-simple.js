@@ -1227,8 +1227,15 @@ async function main() {
           try {
             const files = fs.readdirSync(dir);
             // 最新のmp4ファイルを探す（Veo3のエクスポートファイル名パターンにマッチ）
+            // パターン: Dec_28__1250_15s_*.mp4, flow-video-*.mp4 など
             const mp4Files = files
-              .filter(f => f.endsWith('.mp4') && (f.includes('export') || f.includes('video') || f.includes('scene') || /^\d+/.test(f)))
+              .filter(f => f.endsWith('.mp4') && (
+                f.includes('flow') ||
+                f.includes('video') ||
+                f.includes('scene') ||
+                f.includes('export') ||
+                /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_/.test(f)
+              ))
               .map(f => ({
                 name: f,
                 path: path.join(dir, f),
