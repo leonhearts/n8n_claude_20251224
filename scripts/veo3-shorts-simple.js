@@ -257,7 +257,10 @@ async function startNewProject(page, config) {
     }
   } else {
     console.error('Using existing project');
-    await page.waitForTimeout(2000);
+    // ループ時は新しいコンテンツがロードされるまで十分待機する
+    // 短すぎると前の画像のダウンロードボタンをクリックしてしまう
+    console.error('Waiting for page content to load...');
+    await page.waitForTimeout(6000);
   }
 }
 
@@ -572,6 +575,11 @@ async function generateImage(page, config) {
   // 画像モードに切り替え
   await selectImagesMode(page);
 
+  // モード切り替え後、UIが完全に更新されるまで待機
+  // ループ時は前の状態が残っている可能性があるため
+  console.error('Waiting for UI to update after mode switch...');
+  await page.waitForTimeout(3000);
+
   // 画像生成設定を変更
   await configureImageSettings(page, config);
 
@@ -650,6 +658,10 @@ async function generateImage(page, config) {
  */
 async function downloadGeneratedImage(page, config) {
   console.error('\n=== Downloading Generated Image ===');
+
+  // ダウンロード前に少し待機（新しい画像が確実に表示されるまで）
+  console.error('Waiting for generated image to be fully loaded...');
+  await page.waitForTimeout(3000);
 
   // 出力パスを画像用に調整
   let outputPath = config.outputPath;
