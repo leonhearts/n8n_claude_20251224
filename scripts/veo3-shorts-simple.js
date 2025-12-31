@@ -1213,11 +1213,10 @@ async function main() {
     if (!downloadedFile) {
       console.error('Trying to find Chrome downloaded file (method 3)...');
 
-      // Windowsダウンロードフォルダのマウントポイント
+      // Windowsダウンロードフォルダのマウントポイント（/tmpは除外 - 無関係なファイルが多すぎる）
       const downloadDirs = [
         '/mnt/downloads',  // docker-compose.ymlでマウントされている場合
-        '/home/node/Downloads',
-        '/tmp'
+        '/home/node/Downloads'
       ];
 
       // ダウンロード完了を待つ（最大60秒）
@@ -1227,9 +1226,9 @@ async function main() {
         for (const dir of downloadDirs) {
           try {
             const files = fs.readdirSync(dir);
-            // 最新のmp4ファイルを探す
+            // 最新のmp4ファイルを探す（Veo3のエクスポートファイル名パターンにマッチ）
             const mp4Files = files
-              .filter(f => f.endsWith('.mp4') && !f.includes('temp') && !f.includes('veo3_'))
+              .filter(f => f.endsWith('.mp4') && (f.includes('export') || f.includes('video') || f.includes('scene') || /^\d+/.test(f)))
               .map(f => ({
                 name: f,
                 path: path.join(dir, f),
