@@ -606,6 +606,22 @@ async function generateImage(page, config) {
   for (let i = 0; i < 120; i++) { // 最大240秒
     await page.waitForTimeout(2000);
 
+    // エラーメッセージをチェック（「生成できませんでした」など）
+    const errorMessages = await page.$$eval('*', els =>
+      els.filter(el => {
+        const text = el.innerText || '';
+        return text.includes('生成できませんでした') ||
+               text.includes('Could not generate') ||
+               text.includes('generation failed') ||
+               text.includes('エラー');
+      }).map(el => el.innerText.substring(0, 100))
+    );
+
+    if (errorMessages.length > 0) {
+      console.error('Image generation error detected: ' + errorMessages[0]);
+      throw new Error('Image generation failed: ' + errorMessages[0]);
+    }
+
     // 生成された画像を探す
     const images = await page.$$('img');
     for (const img of images) {
@@ -827,6 +843,22 @@ async function generateVideo(page, config, index) {
     console.error(`  ${Math.round((Date.now() - startTime) / 1000)}s elapsed`);
 
     await dismissNotifications(page);
+
+    // エラーメッセージをチェック（「生成できませんでした」など）
+    const errorMessages = await page.$$eval('*', els =>
+      els.filter(el => {
+        const text = el.innerText || '';
+        return text.includes('生成できませんでした') ||
+               text.includes('Could not generate') ||
+               text.includes('generation failed') ||
+               text.includes('エラー');
+      }).map(el => el.innerText.substring(0, 100))
+    );
+
+    if (errorMessages.length > 0) {
+      console.error('Generation error detected: ' + errorMessages[0]);
+      throw new Error('Video generation failed: ' + errorMessages[0]);
+    }
 
     // 「シーンに追加」ボタンが表示されたら動画生成完了
     const addToSceneBtn = await page.$(SELECTORS.addToSceneButton);
