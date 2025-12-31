@@ -30,10 +30,30 @@ docker exec -u root n8n-n8n-1 chown node:node /home/node/veo3-shorts-simple.js
 - Chromeがリモートデバッグモードで起動していること
 - Google Veo3にログイン済みであること
 
+### Chrome起動・終了コマンド（PowerShell）
+
 ```powershell
-# Chrome起動
+# ========== Chrome起動 ==========
 & "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --user-data-dir="C:\gemini-chrome-profile"
 ```
+
+```powershell
+# ========== Chrome終了 ==========
+# gemini-chrome-profile を使用しているChromeプロセスのみ終了
+Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" | ? { $_.CommandLine -match 'gemini-chrome-profile' } | % { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+```
+
+```powershell
+# ========== Chrome再起動（終了→待機→起動） ==========
+Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" | ? { $_.CommandLine -match 'gemini-chrome-profile' } | % { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 3
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --user-data-dir="C:\gemini-chrome-profile"
+```
+
+**⚠️ 重要:**
+- `--remote-debugging-address=0.0.0.0` はDockerからの接続に必須
+- `--user-data-dir="C:\gemini-chrome-profile"` で専用プロファイルを使用（通常のChromeと分離）
+- 終了コマンドは `gemini-chrome-profile` を使用しているChromeのみを終了（他のChromeには影響なし）
 
 ---
 
