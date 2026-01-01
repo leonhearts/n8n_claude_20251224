@@ -1,0 +1,271 @@
+{
+  "name": "Gemini Prompt Generator",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "trigger-manual",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ",
+          "mode": "list",
+          "cachedResultName": "廃墟チャンネルマスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "シート1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "New"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "read-spreadsheet",
+      "name": "Read Spreadsheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [220, 0],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"contents\": [\n    {\n      \"role\": \"user\",\n      \"parts\": [\n        {\n          \"text\": \"この動画を分析してください: {{ $json.search_url }}\"\n        }\n      ]\n    }\n  ],\n  \"systemInstruction\": {\n    \"parts\": [\n      {\n        \"text\": \"## 役割と目標 (Role and Goal)\\nあなたは、YouTube動画内の空間や建造物を**「建築学的・美術的」に解析**し、生成AI（Midjourney + Veo 3/Sora 2）で**オリジナルを完全に再現**するためのプロンプトセットを作成するエキスパートです。\\n単に「古い建物」と書くのではなく、**「それが何であるか（固有名詞）」**を特定し、**「どのような素材・形状で構成されているか（マテリアル・ジオメトリ）」**を言語化することで、画像の再現性を極限まで高めます。\\n動画は**8秒単位**で分割し、各セクションに対して「ベース画像」と「動画」の1対1ペアを出力します。\\n\\n## 入力 (Input)\\n* **必須:** YouTube動画のURL\\n* **世界観:** 元動画と同じ世界観で再現\\n\\n## 行動とルール (Actions and Rules)\\n\\n### 1. 対象の特定と構造解析 (Identification & Structural Analysis)\\n動画を解析する際、以下の要素を必ず特定・言語化してください。これが再現性の鍵となります。\\n* **固有名詞の特定:** それが有名な場所や建造物であれば、必ず**英語の正式名称**を使用する（例: \\\"It's a Small World facade\\\", \\\"Shibuya Crossing\\\", \\\"The Empire State Building\\\"）。\\n* **様式とアーティスト:** 特定の建築様式（Gothic, Brutalist）や、関連するアーティスト/スタイル（e.g., Mary Blair style, Ghibli style）があれば記述する。\\n* **形状と素材（Geometry & Material）:** 漠然とした描写を避け、物理的な構成要素を書く（例: \\\"geometric blocks and triangles\\\", \\\"red brick texture\\\", \\\"reflective glass panels\\\", \\\"concrete pillars\\\"）。\\n* **状態（Condition）:** 経年変化や汚れを書く（例: \\\"peeling paint\\\", \\\"moss growing\\\", \\\"rusty metal\\\"）。\\n\\n### 2. 1対1ペアリング生成 (1:1 Pairing Strategy)\\n総再生時間をカバーするまで、8秒ごとに以下のペアを出力します（最大16セグメント）。\\n\\n* **Step A: ベース画像プロンプト (Base Image Prompt)**\\n    * **最重要:** ここで「固有名詞」「形状」「素材」「状態」をすべて詰め込み、オリジナルの見た目を確定させます。\\n* **Step B: 動画生成プロンプト (Video Prompt)**\\n    * Step Aの画像を「入力（First Frame）」と仮定し、そこからの**動き（Motion）**のみを記述します。\\n\\n## 出力形式 (Output Format)\\n必ず以下のJSON形式で出力してください。他の形式は受け付けません。\\n\\n```json\\n{\\n  \\\"project\\\": {\\n    \\\"subject\\\": \\\"特定した固有名詞・場所名\\\",\\n    \\\"components\\\": \\\"主要な素材や形状のキーワード\\\",\\n    \\\"duration\\\": \\\"総尺（例: 1:30）\\\"\\n  },\\n  \\\"segments\\\": [\\n    {\\n      \\\"index\\\": 1,\\n      \\\"timeRange\\\": \\\"00:00 - 00:08\\\",\\n      \\\"intent\\\": \\\"このシーンの意図（日本語）\\\",\\n      \\\"imagePrompt\\\": \\\"A realistic photo of [Subject Name]. Structure made of [Material A] and [Shape B]. [Condition description]. [Lighting].\\\",\\n      \\\"videoPrompt\\\": \\\"[Global Style], Start from the provided image. [Detailed Motion Description].\\\"\\n    },\\n    {\\n      \\\"index\\\": 2,\\n      \\\"timeRange\\\": \\\"00:08 - 00:16\\\",\\n      \\\"intent\\\": \\\"...\\\",\\n      \\\"imagePrompt\\\": \\\"...\\\",\\n      \\\"videoPrompt\\\": \\\"...\\\"\\n    }\\n  ]\\n}\\n```\\n\\n重要: 必ずJSON形式のみで出力し、前後に説明文を付けないでください。\"\n      }\n    ]\n  },\n  \"generationConfig\": {\n    \"temperature\": 0.7,\n    \"maxOutputTokens\": 8192\n  }\n}",
+        "options": {}
+      },
+      "id": "gemini-api",
+      "name": "Gemini API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [440, 0],
+      "credentials": {
+        "googlePalmApi": {
+          "id": "Nano Banana",
+          "name": "Nano Banana"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gemini API response and extract prompts\nconst response = $input.first().json;\nconst searchUrl = $('Read Spreadsheet').item.json.search_url;\n\n// Extract text content from Gemini response\nlet textContent = '';\ntry {\n  textContent = response.candidates[0].content.parts[0].text;\n} catch (e) {\n  throw new Error('Failed to extract Gemini response: ' + JSON.stringify(response));\n}\n\n// Parse JSON from response\nlet parsed;\ntry {\n  // Try to find JSON in the response (may have markdown code blocks)\n  const jsonMatch = textContent.match(/```json\\n?([\\s\\S]*?)\\n?```/) || \n                    textContent.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    const jsonStr = jsonMatch[1] || jsonMatch[0];\n    parsed = JSON.parse(jsonStr);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n} catch (e) {\n  throw new Error('Failed to parse JSON: ' + e.message + '\\n\\nRaw response:\\n' + textContent.substring(0, 500));\n}\n\n// Build output object with prompts\nconst output = {\n  search_url: searchUrl,\n  project: parsed.project,\n  segmentCount: parsed.segments?.length || 0\n};\n\n// Map segments to image_prompt and video_prompt columns\nif (parsed.segments && Array.isArray(parsed.segments)) {\n  parsed.segments.forEach((seg, idx) => {\n    const num = idx + 1;\n    if (num <= 16) {\n      output['image_prompt' + num] = seg.imagePrompt || '';\n      output['video_prompt' + num] = seg.videoPrompt || '';\n    }\n  });\n}\n\n// Fill remaining slots with empty strings\nfor (let i = (parsed.segments?.length || 0) + 1; i <= 16; i++) {\n  output['image_prompt' + i] = '';\n  output['video_prompt' + i] = '';\n}\n\nreturn [{ json: output }];"
+      },
+      "id": "parse-response",
+      "name": "Parse Gemini Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 0],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ",
+          "mode": "list",
+          "cachedResultName": "廃墟チャンネルマスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "シート1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "search_url": "={{ $json.search_url }}",
+            "status": "Plan",
+            "image_prompt1": "={{ $json.image_prompt1 }}",
+            "image_prompt2": "={{ $json.image_prompt2 }}",
+            "image_prompt3": "={{ $json.image_prompt3 }}",
+            "image_prompt4": "={{ $json.image_prompt4 }}",
+            "image_prompt5": "={{ $json.image_prompt5 }}",
+            "image_prompt6": "={{ $json.image_prompt6 }}",
+            "image_prompt7": "={{ $json.image_prompt7 }}",
+            "image_prompt8": "={{ $json.image_prompt8 }}",
+            "image_prompt9": "={{ $json.image_prompt9 }}",
+            "image_prompt10": "={{ $json.image_prompt10 }}",
+            "image_prompt11": "={{ $json.image_prompt11 }}",
+            "image_prompt12": "={{ $json.image_prompt12 }}",
+            "image_prompt13": "={{ $json.image_prompt13 }}",
+            "image_prompt14": "={{ $json.image_prompt14 }}",
+            "image_prompt15": "={{ $json.image_prompt15 }}",
+            "image_prompt16": "={{ $json.image_prompt16 }}",
+            "video_prompt1": "={{ $json.video_prompt1 }}",
+            "video_prompt2": "={{ $json.video_prompt2 }}",
+            "video_prompt3": "={{ $json.video_prompt3 }}",
+            "video_prompt4": "={{ $json.video_prompt4 }}",
+            "video_prompt5": "={{ $json.video_prompt5 }}",
+            "video_prompt6": "={{ $json.video_prompt6 }}",
+            "video_prompt7": "={{ $json.video_prompt7 }}",
+            "video_prompt8": "={{ $json.video_prompt8 }}",
+            "video_prompt9": "={{ $json.video_prompt9 }}",
+            "video_prompt10": "={{ $json.video_prompt10 }}",
+            "video_prompt11": "={{ $json.video_prompt11 }}",
+            "video_prompt12": "={{ $json.video_prompt12 }}",
+            "video_prompt13": "={{ $json.video_prompt13 }}",
+            "video_prompt14": "={{ $json.video_prompt14 }}",
+            "video_prompt15": "={{ $json.video_prompt15 }}",
+            "video_prompt16": "={{ $json.video_prompt16 }}"
+          },
+          "matchingColumns": ["search_url"],
+          "schema": [
+            {"id": "search_url", "displayName": "search_url", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "status", "displayName": "status", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt1", "displayName": "image_prompt1", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt2", "displayName": "image_prompt2", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt3", "displayName": "image_prompt3", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt4", "displayName": "image_prompt4", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt5", "displayName": "image_prompt5", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt6", "displayName": "image_prompt6", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt7", "displayName": "image_prompt7", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt8", "displayName": "image_prompt8", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt9", "displayName": "image_prompt9", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt10", "displayName": "image_prompt10", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt11", "displayName": "image_prompt11", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt12", "displayName": "image_prompt12", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt13", "displayName": "image_prompt13", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt14", "displayName": "image_prompt14", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt15", "displayName": "image_prompt15", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "image_prompt16", "displayName": "image_prompt16", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt1", "displayName": "video_prompt1", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt2", "displayName": "video_prompt2", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt3", "displayName": "video_prompt3", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt4", "displayName": "video_prompt4", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt5", "displayName": "video_prompt5", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt6", "displayName": "video_prompt6", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt7", "displayName": "video_prompt7", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt8", "displayName": "video_prompt8", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt9", "displayName": "video_prompt9", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt10", "displayName": "video_prompt10", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt11", "displayName": "video_prompt11", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt12", "displayName": "video_prompt12", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt13", "displayName": "video_prompt13", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt14", "displayName": "video_prompt14", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt15", "displayName": "video_prompt15", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "video_prompt16", "displayName": "video_prompt16", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true}
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "update-spreadsheet",
+      "name": "Update Spreadsheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [880, 0],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "=Gemini Prompt Generated\n\nURL: {{ $('Read Spreadsheet').item.json.search_url }}\nSegments: {{ $('Parse Gemini Response').item.json.segmentCount }}",
+        "options": {}
+      },
+      "id": "discord-success",
+      "name": "Discord Success",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [1100, 0],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "rt0K8qLyVG6wH6wB",
+          "name": "Discord Webhook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Error handler\nconst errorData = $input.first().json;\n\nreturn [{\n  json: {\n    errorNode: 'Gemini Prompt Generator',\n    errorMessage: errorData.error?.message || errorData.stderr || JSON.stringify(errorData).substring(0, 200)\n  }\n}];"
+      },
+      "id": "format-error",
+      "name": "Format Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "=Gemini Error\n\nError: {{ $json.errorMessage }}",
+        "options": {}
+      },
+      "id": "discord-error",
+      "name": "Discord Error",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [880, 300],
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "rt0K8qLyVG6wH6wB",
+          "name": "Discord Webhook account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{"node": "Read Spreadsheet", "type": "main", "index": 0}]]
+    },
+    "Read Spreadsheet": {
+      "main": [[{"node": "Gemini API", "type": "main", "index": 0}]]
+    },
+    "Gemini API": {
+      "main": [
+        [{"node": "Parse Gemini Response", "type": "main", "index": 0}],
+        [{"node": "Format Error", "type": "main", "index": 0}]
+      ]
+    },
+    "Parse Gemini Response": {
+      "main": [
+        [{"node": "Update Spreadsheet", "type": "main", "index": 0}],
+        [{"node": "Format Error", "type": "main", "index": 0}]
+      ]
+    },
+    "Update Spreadsheet": {
+      "main": [[{"node": "Discord Success", "type": "main", "index": 0}]]
+    },
+    "Format Error": {
+      "main": [[{"node": "Discord Error", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "instanceId": "15c4c69b68a0d89ae26ebe1197eee8426ac5148f2255f927259d610172b7cbb4"
+  }
+}
