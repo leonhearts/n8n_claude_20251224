@@ -41,6 +41,8 @@ const DEFAULT_CONFIG = {
   aspectRatio: 'landscape', // 'landscape'（横向き16:9）または 'portrait'（縦向き9:16）
   // ダウンロード制御（n8n連携用）
   download: true,  // true: 動画をダウンロード、false: ダウンロードせずプロジェクトURLのみ返す
+  // 音声制御
+  keepAudio: true,  // true: 音声を保持、false: 音声を削除
 };
 
 // セレクタ
@@ -1352,8 +1354,10 @@ async function main() {
     fs.copyFileSync(downloadedFile, tempPath);
     console.error('Copied to temp: ' + tempPath);
 
-    // 音声なしでコピー
-    execSync(`ffmpeg -y -i "${tempPath}" -an -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
+    // 音声オプションに応じてコピー
+    const audioOption = config.keepAudio ? '-c:a copy' : '-an';
+    console.error('Audio option: ' + (config.keepAudio ? 'keep audio' : 'remove audio'));
+    execSync(`ffmpeg -y -i "${tempPath}" ${audioOption} -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
 
     // 一時ファイル削除
     try { fs.unlinkSync(tempPath); } catch (e) {}
