@@ -49,37 +49,34 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent",
-        "authentication": "predefinedCredentialType",
-        "nodeCredentialType": "googlePalmApi",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"contents\": [\n    {\n      \"role\": \"user\",\n      \"parts\": [\n        {\n          \"text\": \"この動画を分析してください: {{ $json.search_url }}\"\n        }\n      ]\n    }\n  ],\n  \"systemInstruction\": {\n    \"parts\": [\n      {\n        \"text\": \"## 役割と目標 (Role and Goal)\\nあなたは、YouTube動画内の空間や建造物を**「建築学的・美術的」に解析**し、生成AI（Midjourney + Veo 3/Sora 2）で**オリジナルを完全に再現**するためのプロンプトセットを作成するエキスパートです。\\n単に「古い建物」と書くのではなく、**「それが何であるか（固有名詞）」**を特定し、**「どのような素材・形状で構成されているか（マテリアル・ジオメトリ）」**を言語化することで、画像の再現性を極限まで高めます。\\n動画は**8秒単位**で分割し、各セクションに対して「ベース画像」と「動画」の1対1ペアを出力します。\\n\\n## 入力 (Input)\\n* **必須:** YouTube動画のURL\\n* **世界観:** 元動画と同じ世界観で再現\\n\\n## 行動とルール (Actions and Rules)\\n\\n### 1. 対象の特定と構造解析 (Identification & Structural Analysis)\\n動画を解析する際、以下の要素を必ず特定・言語化してください。これが再現性の鍵となります。\\n* **固有名詞の特定:** それが有名な場所や建造物であれば、必ず**英語の正式名称**を使用する（例: \\\"It's a Small World facade\\\", \\\"Shibuya Crossing\\\", \\\"The Empire State Building\\\"）。\\n* **様式とアーティスト:** 特定の建築様式（Gothic, Brutalist）や、関連するアーティスト/スタイル（e.g., Mary Blair style, Ghibli style）があれば記述する。\\n* **形状と素材（Geometry & Material）:** 漠然とした描写を避け、物理的な構成要素を書く（例: \\\"geometric blocks and triangles\\\", \\\"red brick texture\\\", \\\"reflective glass panels\\\", \\\"concrete pillars\\\"）。\\n* **状態（Condition）:** 経年変化や汚れを書く（例: \\\"peeling paint\\\", \\\"moss growing\\\", \\\"rusty metal\\\"）。\\n\\n### 2. 1対1ペアリング生成 (1:1 Pairing Strategy)\\n総再生時間をカバーするまで、8秒ごとに以下のペアを出力します（最大16セグメント）。\\n\\n* **Step A: ベース画像プロンプト (Base Image Prompt)**\\n    * **最重要:** ここで「固有名詞」「形状」「素材」「状態」をすべて詰め込み、オリジナルの見た目を確定させます。\\n* **Step B: 動画生成プロンプト (Video Prompt)**\\n    * Step Aの画像を「入力（First Frame）」と仮定し、そこからの**動き（Motion）**のみを記述します。\\n\\n## 出力形式 (Output Format)\\n必ず以下のJSON形式で出力してください。他の形式は受け付けません。\\n\\n```json\\n{\\n  \\\"project\\\": {\\n    \\\"subject\\\": \\\"特定した固有名詞・場所名\\\",\\n    \\\"components\\\": \\\"主要な素材や形状のキーワード\\\",\\n    \\\"duration\\\": \\\"総尺（例: 1:30）\\\"\\n  },\\n  \\\"segments\\\": [\\n    {\\n      \\\"index\\\": 1,\\n      \\\"timeRange\\\": \\\"00:00 - 00:08\\\",\\n      \\\"intent\\\": \\\"このシーンの意図（日本語）\\\",\\n      \\\"imagePrompt\\\": \\\"A realistic photo of [Subject Name]. Structure made of [Material A] and [Shape B]. [Condition description]. [Lighting].\\\",\\n      \\\"videoPrompt\\\": \\\"[Global Style], Start from the provided image. [Detailed Motion Description].\\\"\\n    },\\n    {\\n      \\\"index\\\": 2,\\n      \\\"timeRange\\\": \\\"00:08 - 00:16\\\",\\n      \\\"intent\\\": \\\"...\\\",\\n      \\\"imagePrompt\\\": \\\"...\\\",\\n      \\\"videoPrompt\\\": \\\"...\\\"\\n    }\\n  ]\\n}\\n```\\n\\n重要: 必ずJSON形式のみで出力し、前後に説明文を付けないでください。\"\n      }\n    ]\n  },\n  \"generationConfig\": {\n    \"temperature\": 0.7,\n    \"maxOutputTokens\": 8192\n  }\n}",
-        "options": {}
+        "jsCode": "// Build prompt for Gemini\nconst row = $input.first().json;\nconst youtubeUrl = row.search_url;\n\nconst systemPrompt = `## 役割と目標 (Role and Goal)\nあなたは、YouTube動画内の空間や建造物を**「建築学的・美術的」に解析**し、生成AI（Midjourney + Veo 3/Sora 2）で**オリジナルを完全に再現**するためのプロンプトセットを作成するエキスパートです。\n単に「古い建物」と書くのではなく、**「それが何であるか（固有名詞）」**を特定し、**「どのような素材・形状で構成されているか（マテリアル・ジオメトリ）」**を言語化することで、画像の再現性を極限まで高めます。\n動画は**8秒単位**で分割し、各セクションに対して「ベース画像」と「動画」の1対1ペアを出力します。\n\n## 入力 (Input)\n* **必須:** YouTube動画のURL\n* **世界観:** 元動画と同じ世界観で再現\n\n## 行動とルール (Actions and Rules)\n\n### 1. 対象の特定と構造解析 (Identification & Structural Analysis)\n動画を解析する際、以下の要素を必ず特定・言語化してください。これが再現性の鍵となります。\n* **固有名詞の特定:** それが有名な場所や建造物であれば、必ず**英語の正式名称**を使用する（例: \"It's a Small World facade\", \"Shibuya Crossing\", \"The Empire State Building\"）。\n* **様式とアーティスト:** 特定の建築様式（Gothic, Brutalist）や、関連するアーティスト/スタイル（e.g., Mary Blair style, Ghibli style）があれば記述する。\n* **形状と素材（Geometry & Material）:** 漠然とした描写を避け、物理的な構成要素を書く（例: \"geometric blocks and triangles\", \"red brick texture\", \"reflective glass panels\", \"concrete pillars\"）。\n* **状態（Condition）:** 経年変化や汚れを書く（例: \"peeling paint\", \"moss growing\", \"rusty metal\"）。\n\n### 2. 1対1ペアリング生成 (1:1 Pairing Strategy)\n総再生時間をカバーするまで、8秒ごとに以下のペアを出力します（最大16セグメント）。\n\n* **Step A: ベース画像プロンプト (Base Image Prompt)**\n    * **最重要:** ここで「固有名詞」「形状」「素材」「状態」をすべて詰め込み、オリジナルの見た目を確定させます。\n* **Step B: 動画生成プロンプト (Video Prompt)**\n    * Step Aの画像を「入力（First Frame）」と仮定し、そこからの**動き（Motion）**のみを記述します。\n\n## 出力形式 (Output Format)\n必ず以下のJSON形式で出力してください。他の形式は受け付けません。\n\n\\`\\`\\`json\n{\n  \"project\": {\n    \"subject\": \"特定した固有名詞・場所名\",\n    \"components\": \"主要な素材や形状のキーワード\",\n    \"duration\": \"総尺（例: 1:30）\"\n  },\n  \"segments\": [\n    {\n      \"index\": 1,\n      \"timeRange\": \"00:00 - 00:08\",\n      \"intent\": \"このシーンの意図（日本語）\",\n      \"imagePrompt\": \"A realistic photo of [Subject Name]. Structure made of [Material A] and [Shape B]. [Condition description]. [Lighting].\",\n      \"videoPrompt\": \"[Global Style], Start from the provided image. [Detailed Motion Description].\"\n    }\n  ]\n}\n\\`\\`\\`\n\n重要: 必ずJSON形式のみで出力し、前後に説明文を付けないでください。`;\n\nconst fullPrompt = `${systemPrompt}\\n\\n---\\n\\n以下の動画を分析してください:\\n${youtubeUrl}`;\n\nreturn [{\n  json: {\n    search_url: youtubeUrl,\n    prompt: fullPrompt\n  }\n}];"
       },
-      "id": "gemini-api",
-      "name": "Gemini API",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [440, 0],
-      "credentials": {
-        "googlePalmApi": {
-          "id": "Nano Banana",
-          "name": "Nano Banana"
-        }
+      "id": "build-prompt",
+      "name": "Build Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 0]
+    },
+    {
+      "parameters": {
+        "command": "=node /home/node/scripts/gemini-auto.js '{{ JSON.stringify({ prompts: [{ index: 1, text: $json.prompt }] }) }}'"
       },
+      "id": "gemini-browser",
+      "name": "Gemini Browser",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [660, 0],
       "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "jsCode": "// Parse Gemini API response and extract prompts\nconst response = $input.first().json;\nconst searchUrl = $('Read Spreadsheet').item.json.search_url;\n\n// Extract text content from Gemini response\nlet textContent = '';\ntry {\n  textContent = response.candidates[0].content.parts[0].text;\n} catch (e) {\n  throw new Error('Failed to extract Gemini response: ' + JSON.stringify(response));\n}\n\n// Parse JSON from response\nlet parsed;\ntry {\n  // Try to find JSON in the response (may have markdown code blocks)\n  const jsonMatch = textContent.match(/```json\\n?([\\s\\S]*?)\\n?```/) || \n                    textContent.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    const jsonStr = jsonMatch[1] || jsonMatch[0];\n    parsed = JSON.parse(jsonStr);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n} catch (e) {\n  throw new Error('Failed to parse JSON: ' + e.message + '\\n\\nRaw response:\\n' + textContent.substring(0, 500));\n}\n\n// Build output object with prompts\nconst output = {\n  search_url: searchUrl,\n  project: parsed.project,\n  segmentCount: parsed.segments?.length || 0\n};\n\n// Map segments to image_prompt and video_prompt columns\nif (parsed.segments && Array.isArray(parsed.segments)) {\n  parsed.segments.forEach((seg, idx) => {\n    const num = idx + 1;\n    if (num <= 16) {\n      output['image_prompt' + num] = seg.imagePrompt || '';\n      output['video_prompt' + num] = seg.videoPrompt || '';\n    }\n  });\n}\n\n// Fill remaining slots with empty strings\nfor (let i = (parsed.segments?.length || 0) + 1; i <= 16; i++) {\n  output['image_prompt' + i] = '';\n  output['video_prompt' + i] = '';\n}\n\nreturn [{ json: output }];"
+        "jsCode": "// Parse Gemini browser response and extract prompts\nconst output = $input.first().json.stdout;\nconst searchUrl = $('Read Spreadsheet').item.json.search_url;\n\n// Parse the result JSON from gemini-auto.js\nlet result;\ntry {\n  result = JSON.parse(output);\n} catch (e) {\n  throw new Error('Failed to parse gemini-auto.js output: ' + output.substring(0, 500));\n}\n\nif (result.error) {\n  throw new Error('Gemini error: ' + result.error);\n}\n\n// Get the response text (result_p1 from gemini-auto.js)\nconst responseText = result.result_p1 || '';\n\nif (!responseText || responseText.includes('(Error') || responseText.includes('(timeout)')) {\n  throw new Error('Gemini response invalid: ' + responseText.substring(0, 200));\n}\n\n// Parse JSON from response\nlet parsed;\ntry {\n  // Try to find JSON in the response (may have markdown code blocks)\n  const jsonMatch = responseText.match(/```json\\n?([\\s\\S]*?)\\n?```/) || \n                    responseText.match(/\\{[\\s\\S]*\"segments\"[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    const jsonStr = jsonMatch[1] || jsonMatch[0];\n    parsed = JSON.parse(jsonStr);\n  } else {\n    throw new Error('No JSON found in response');\n  }\n} catch (e) {\n  throw new Error('Failed to parse JSON: ' + e.message + '\\n\\nRaw response:\\n' + responseText.substring(0, 500));\n}\n\n// Build output object with prompts\nconst outputData = {\n  search_url: searchUrl,\n  project: parsed.project,\n  segmentCount: parsed.segments?.length || 0\n};\n\n// Map segments to image_prompt and video_prompt columns\nif (parsed.segments && Array.isArray(parsed.segments)) {\n  parsed.segments.forEach((seg, idx) => {\n    const num = idx + 1;\n    if (num <= 16) {\n      outputData['image_prompt' + num] = seg.imagePrompt || '';\n      outputData['video_prompt' + num] = seg.videoPrompt || '';\n    }\n  });\n}\n\n// Fill remaining slots with empty strings\nfor (let i = (parsed.segments?.length || 0) + 1; i <= 16; i++) {\n  outputData['image_prompt' + i] = '';\n  outputData['video_prompt' + i] = '';\n}\n\nreturn [{ json: outputData }];"
       },
       "id": "parse-response",
       "name": "Parse Gemini Response",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 0],
+      "position": [880, 0],
       "onError": "continueErrorOutput"
     },
     {
@@ -183,7 +180,7 @@
       "name": "Update Spreadsheet",
       "type": "n8n-nodes-base.googleSheets",
       "typeVersion": 4.5,
-      "position": [880, 0],
+      "position": [1100, 0],
       "credentials": {
         "googleSheetsOAuth2Api": {
           "id": "kqPtYtZUaTfWiuBd",
@@ -201,7 +198,7 @@
       "name": "Discord Success",
       "type": "n8n-nodes-base.discord",
       "typeVersion": 2,
-      "position": [1100, 0],
+      "position": [1320, 0],
       "credentials": {
         "discordWebhookApi": {
           "id": "rt0K8qLyVG6wH6wB",
@@ -217,7 +214,7 @@
       "name": "Format Error",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [660, 300]
+      "position": [880, 300]
     },
     {
       "parameters": {
@@ -229,7 +226,7 @@
       "name": "Discord Error",
       "type": "n8n-nodes-base.discord",
       "typeVersion": 2,
-      "position": [880, 300],
+      "position": [1100, 300],
       "credentials": {
         "discordWebhookApi": {
           "id": "rt0K8qLyVG6wH6wB",
@@ -243,9 +240,12 @@
       "main": [[{"node": "Read Spreadsheet", "type": "main", "index": 0}]]
     },
     "Read Spreadsheet": {
-      "main": [[{"node": "Gemini API", "type": "main", "index": 0}]]
+      "main": [[{"node": "Build Prompt", "type": "main", "index": 0}]]
     },
-    "Gemini API": {
+    "Build Prompt": {
+      "main": [[{"node": "Gemini Browser", "type": "main", "index": 0}]]
+    },
+    "Gemini Browser": {
       "main": [
         [{"node": "Parse Gemini Response", "type": "main", "index": 0}],
         [{"node": "Format Error", "type": "main", "index": 0}]

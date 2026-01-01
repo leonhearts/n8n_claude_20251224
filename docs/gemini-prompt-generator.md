@@ -18,9 +18,9 @@ Discord通知
 
 ## 使用技術
 
-- **Gemini API**: `models/gemini-2.5-flash-image` (Nano Banana)
-- **n8n**: AI Agentノード（複数出力のため）
-- **入力**: YouTube URL（直接Geminiに渡す）
+- **Gemini Browser**: `gemini-auto.js`（既存のブラウザ自動化スクリプト）
+- **Chrome CDP**: Veo3と同じChromeインスタンスを使用
+- **入力**: YouTube URL（Geminiチャットに渡す）
 
 ## スプレッドシート構造
 
@@ -40,20 +40,24 @@ Discord通知
 - フィルタ: `status = "New"`
 - 1行ずつ処理
 
-### 3. Gemini API 呼び出し
-- YouTube URLを渡して動画分析
-- システムプロンプトで出力形式を指定
-- 8秒単位でセグメント分割
+### 3. プロンプト構築
+- システムプロンプト + YouTube URLを結合
+- JSON出力形式を指定
 
-### 4. 出力パース
-- Geminiの出力からプロンプトを抽出
+### 4. Gemini Browser 呼び出し
+- `gemini-auto.js` を実行
+- gemini.google.com でプロンプトを送信
+- 回答を待機して取得
+
+### 5. 出力パース
+- Geminiの出力からJSONを抽出
 - `image_prompt1-16`, `video_prompt1-16` にマッピング
 
-### 5. スプレッドシート更新
+### 6. スプレッドシート更新
 - プロンプトを書き込み
 - `status` を `"Plan"` に更新
 
-### 6. Discord通知
+### 7. Discord通知
 - 成功/失敗を通知
 
 ## Geminiシステムプロンプト
