@@ -1,89 +1,194 @@
-# Gemini プロンプト生成ワークフロー
+# Gemini Prompt Generator ワークフロー
 
-YouTube動画をGemini APIで分析し、Veo3用のプロンプト（image_prompt1-16, video_prompt1-16）を自動生成するワークフロー。
+YouTube動画を分析し、画像生成・動画生成用のプロンプトを自動生成するワークフロー。
 
-## 概要
+## ワークフロー構成
 
 ```
-スプレッドシート (status=New)
+Manual Trigger
     ↓
-Gemini API (動画分析)
+Read Spreadsheet (status="New"のみ)
     ↓
-プロンプト抽出・パース
+Build Prompt (プロンプト構造を作成)
     ↓
-スプレッドシート更新 (status=Plan)
+Convert to File (JSONをファイルに変換)
     ↓
-Discord通知
+Write Input File (/tmp/gemini_input.json)
+    ↓
+Gemini Browser (gemini-auto.js実行)
+    ↓
+Parse Gemini Response (JSON解析)
+    ↓
+Update Spreadsheet (status="Plan"に更新)
+    ↓
+Discord Success / Discord Error
 ```
 
-## 使用技術
+## ノード詳細
 
-- **Gemini Browser**: `gemini-auto.js`（既存のブラウザ自動化スクリプト）
-- **Chrome CDP**: Veo3と同じChromeインスタンスを使用
-- **入力**: YouTube URL（Geminiチャットに渡す）
+### 1. Read Spreadsheet
+| 項目 | 値 |
+|------|-----|
+| タイプ | Google Sheets |
+| 操作 | Read |
+| フィルター | `status = "New"` |
+| 出力 | `search_url` (YouTube URL) |
+
+### 2. Build Prompt
+| 項目 | 値 |
+|------|-----|
+| タイプ | Code |
+| 処理 | システムプロンプト + YouTube URLを結合 |
+
+**出力構造:**
+```json
+{
+  "prompts": [
+    { "index": 1, "text": "システムプロンプト + YouTube URL" }
+  ]
+}
+```
+
+### 3. Convert to File
+| 項目 | 値 |
+|------|-----|
+| タイプ | Convert To File |
+| 操作 | toJson |
+| 処理 | JSONをバイナリファイルに変換 |
+
+### 4. Write Input File
+| 項目 | 値 |
+|------|-----|
+| タイプ | Read/Write Files from Disk |
+| 操作 | Write |
+| ファイルパス | `/tmp/gemini_input.json` |
+
+### 5. Gemini Browser
+| 項目 | 値 |
+|------|-----|
+| タイプ | Execute Command |
+| コマンド | `node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file --cdp=http://192.168.65.254:9222` |
+| エラー処理 | continueErrorOutput |
+
+### 6. Parse Gemini Response
+| 項目 | 値 |
+|------|-----|
+| タイプ | Code |
+| 入力 | `$json.stdout` |
+| 処理 | JSONパース → segments配列をimage_prompt/video_promptにマッピング |
+
+### 7. Update Spreadsheet
+| 項目 | 値 |
+|------|-----|
+| タイプ | Google Sheets |
+| 操作 | Update |
+| マッチキー | `search_url` |
+| 更新フィールド | status="Plan", image_prompt1-16, video_prompt1-16 |
+
+---
+
+## gemini-auto.js
+
+### 使用方法
+
+```bash
+# ファイルから入力（推奨）
+node gemini-auto.js /path/to/input.json --file --cdp=http://192.168.65.254:9222
+
+# 直接JSON引数（短いプロンプトのみ）
+node gemini-auto.js '{"prompts":[{"index":1,"text":"..."}]}'
+```
+
+### 入力形式
+
+```json
+{
+  "prompts": [
+    { "index": 1, "text": "プロンプトテキスト" },
+    { "index": 2, "text": "2つ目のプロンプト" }
+  ]
+}
+```
+
+### 出力形式
+
+```json
+{
+  "result_p1": "Geminiからの応答テキスト",
+  "result_p2": "2つ目の応答"
+}
+```
+
+### 動作フロー
+
+1. Chrome CDPに接続 (`http://192.168.65.254:9222`)
+2. `https://gemini.google.com/app` に移動
+3. 各プロンプトについて:
+   - テキストボックス（`div[role="textbox"]`）にプロンプトを入力
+   - 送信ボタン（`[class*="send-button"]`）をクリック
+   - 応答が安定するまで待機（最大240秒）
+   - `.markdown`要素から最新の応答を取得
+4. 結果をJSON形式で標準出力
+
+### セレクタ一覧
+
+| 要素 | セレクタ |
+|------|----------|
+| 入力欄 | `div[role="textbox"]` |
+| 送信ボタン | `[class*="send-button"]` |
+| 応答エリア | `.markdown` |
+
+---
 
 ## スプレッドシート構造
 
-| カラム | 説明 |
-|--------|------|
-| search_url | YouTube動画URL（入力） |
-| status | ワークフロー状態（New → Plan） |
-| image_prompt1-16 | 画像生成プロンプト（出力） |
-| video_prompt1-16 | 動画生成プロンプト（出力） |
+| 列名 | 説明 | 例 |
+|------|------|-----|
+| search_url | YouTube動画URL | `https://youtube.com/watch?v=xxx` |
+| status | ワークフロー状態 | New → Plan |
+| image_prompt1-16 | 画像生成プロンプト | "A realistic photo of..." |
+| video_prompt1-16 | 動画生成プロンプト | "Slow camera pan..." |
 
-## ワークフローフロー
+---
 
-### 1. トリガー
-- 手動実行 または スケジュール
+## エラーハンドリング
 
-### 2. スプレッドシート読み込み
-- フィルタ: `status = "New"`
-- 1行ずつ処理
+```
+Gemini Browser ─┬─ 成功 → Parse Gemini Response ─┬─ 成功 → Update Spreadsheet → Discord Success
+                │                                 │
+                └─ 失敗 → Format Error ───────────┴─ 失敗 → Discord Error
+```
 
-### 3. プロンプト構築
-- システムプロンプト + YouTube URLを結合
-- JSON出力形式を指定
+---
 
-### 4. Gemini Browser 呼び出し
-- `gemini-auto.js` を実行
-- gemini.google.com でプロンプトを送信
-- 回答を待機して取得
-
-### 5. 出力パース
-- Geminiの出力からJSONを抽出
-- `image_prompt1-16`, `video_prompt1-16` にマッピング
-
-### 6. スプレッドシート更新
-- プロンプトを書き込み
-- `status` を `"Plan"` に更新
-
-### 7. Discord通知
-- 成功/失敗を通知
-
-## Geminiシステムプロンプト
+## Geminiシステムプロンプト概要
 
 動画を「建築学的・美術的」に解析し、以下を出力：
-- 8秒単位でセグメント分割
+- 8秒単位でセグメント分割（最大16セグメント = 128秒）
 - 各セグメントに「ベース画像プロンプト」と「動画生成プロンプト」のペア
 - 固有名詞、素材、形状、状態を詳細に記述
 
-### 出力形式例
-
+**出力JSON形式:**
+```json
+{
+  "project": {
+    "subject": "特定した固有名詞・場所名",
+    "components": "主要な素材や形状のキーワード",
+    "duration": "総尺（例: 1:30）"
+  },
+  "segments": [
+    {
+      "index": 1,
+      "timeRange": "00:00 - 00:08",
+      "intent": "このシーンの意図",
+      "imagePrompt": "A realistic photo of...",
+      "videoPrompt": "Slow camera pan..."
+    }
+  ]
+}
 ```
-#### Segment 1 (00:00 - 00:08)
-**1. 構造・演出意図:** ...
-**2. ベース画像プロンプト:** ...
-**3. 動画生成プロンプト:** ...
 
-#### Segment 2 (00:08 - 00:16)
-...
-```
-
-## 再利用パーツ（既存ワークフローより）
-
-- スプレッドシート読み書き設定
-- Discord通知設定
-- エラーハンドリングパターン
+---
 
 ## ファイル構成
 
@@ -91,12 +196,17 @@ Discord通知
 /home/user/n8n_claude_20251224/
 ├── docs/
 │   └── gemini-prompt-generator.md  # このドキュメント
+├── scripts/
+│   └── gemini-auto.js              # ブラウザ自動化スクリプト
 └── workflows/
-    └── gemini-prompt-generator.json  # ワークフロー定義
+    └── gemini-prompt-generator.json # ワークフロー定義
 ```
+
+---
 
 ## 注意事項
 
-- Gemini APIのレート制限に注意
-- 長い動画は16セグメント（128秒）まで
-- YouTube URLはGeminiが直接アクセス可能な公開動画のみ
+- 長いプロンプトはシェルエスケープの問題があるため、必ずファイル経由（`--file`フラグ）で渡す
+- Geminiの応答待ち時間は最大240秒（4分）
+- YouTube URLはGeminiが直接アクセス可能な公開動画のみ対応
+- Chrome CDPは `http://192.168.65.254:9222` で待機している必要がある
