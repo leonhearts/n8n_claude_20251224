@@ -110,9 +110,8 @@ async function run() {
   }
 
   // Launch browser with persistent context
-  const context = await chromium.launchPersistentContext(USER_DATA_DIR, {
+  const launchOptions = {
     headless: true,
-    executablePath: executablePath,
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
@@ -120,7 +119,13 @@ async function run() {
       '--disable-gpu'
     ],
     viewport: { width: 1280, height: 800 }
-  });
+  };
+
+  if (executablePath) {
+    launchOptions.executablePath = executablePath;
+  }
+
+  const context = await chromium.launchPersistentContext(USER_DATA_DIR, launchOptions);
 
   const page = context.pages()[0] || await context.newPage();
 
