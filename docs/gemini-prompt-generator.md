@@ -2,6 +2,8 @@
 
 YouTube動画を分析し、画像生成・動画生成用のプロンプトを自動生成するワークフロー。
 
+> **注意**: GPT版（gpt-auto.js）も作成済みですが、ログイン周りにバグが残っています。現時点ではGemini版を使用してください。
+
 ## ワークフロー構成
 
 ```
@@ -87,17 +89,34 @@ Discord Success / Discord Error
 
 ---
 
-## gemini-auto.js
+## gemini-auto.js (FULL版)
 
 ### 使用方法
 
 ```bash
-# ファイルから入力（推奨）
-node gemini-auto.js /path/to/input.json --file --cdp=http://192.168.65.254:9222
+# CDPモード（推奨、Veo3と同様）
+node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file --cdp=http://192.168.65.254:9222
 
-# 直接JSON引数（短いプロンプトのみ）
-node gemini-auto.js '{"prompts":[{"index":1,"text":"..."}]}'
+# Cookie + プロファイルモード（CDPなし）
+node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file
 ```
+
+### フラグ一覧
+
+| フラグ | 説明 | デフォルト |
+|--------|------|------------|
+| `--file` | 入力がJSONファイルパス | - |
+| `--base64` | 入力がBase64エンコードJSON | - |
+| `--cdp=URL` | CDP接続URL | なし（Cookieモード） |
+| `--cookies=PATH` | Cookieファイルパス | `/home/node/scripts/gemini-cookies.json` |
+| `--profile=DIR` | ブラウザプロファイルディレクトリ | `/home/node/scripts/gemini-browser-profile` |
+| `--headful` | ヘッドフルモード（非CDPのみ） | headless |
+| `--goto=URL` | Gemini URL | `https://gemini.google.com/app` |
+| `--timeout=MS` | 一般タイムアウト | 180000 |
+| `--answerWait=MS` | 応答待ちタイムアウト | 180000 |
+| `--stabilize=MS` | 応答安定化待ち時間 | 6000 |
+| `--screenshot=PATH` | スクリーンショット保存先 | `/home/node/scripts/gemini-auto-result.png` |
+| `--noScreenshot` | スクリーンショット無効 | - |
 
 ### 入力形式
 
@@ -121,21 +140,25 @@ node gemini-auto.js '{"prompts":[{"index":1,"text":"..."}]}'
 
 ### 動作フロー
 
-1. Chrome CDPに接続 (`http://192.168.65.254:9222`)
+1. CDPモードまたはCookieモードでブラウザに接続
 2. `https://gemini.google.com/app` に移動
-3. 各プロンプトについて:
+3. ログイン状態を確認（未ログインならエラー終了）
+4. 各プロンプトについて:
+   - 生成中の場合は完了まで待機（停止ボタン非表示を確認）
    - テキストボックス（`div[role="textbox"]`）にプロンプトを入力
-   - 送信ボタン（`[class*="send-button"]`）をクリック
-   - 応答が安定するまで待機（最大240秒）
+   - 送信ボタンをクリック
+   - 応答が安定するまで待機（テキストが6秒間変化しなければ完了）
    - `.markdown`要素から最新の応答を取得
-4. 結果をJSON形式で標準出力
+5. スクリーンショット保存（オプション）
+6. 結果をJSON形式で標準出力
 
 ### セレクタ一覧
 
 | 要素 | セレクタ |
 |------|----------|
 | 入力欄 | `div[role="textbox"]` |
-| 送信ボタン | `[class*="send-button"]` |
+| 送信ボタン | `button[aria-label="送信"], button[aria-label="Send message"]` |
+| 停止ボタン | `button[aria-label*="停止"], button[aria-label*="Stop"]` |
 | 応答エリア | `.markdown` |
 
 ---
