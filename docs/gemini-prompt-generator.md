@@ -364,3 +364,37 @@ $script | docker exec -i n8n-n8n-1 sh -s
 ```powershell
 docker cp C:\script_all\n8n_claude_20251224\scripts\gemini-auto.js n8n-n8n-1:/home/node/scripts/gemini-auto.js
 ```
+
+### Chrome起動・終了コマンド
+
+```powershell
+# ========== Chrome起動 ==========
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --user-data-dir="C:\gemini-chrome-profile"
+```
+
+```powershell
+# ========== Chrome終了（gemini-chrome-profileのみ） ==========
+Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" | ? { $_.CommandLine -match 'gemini-chrome-profile' } | % { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+```
+
+```powershell
+# ========== Chrome再起動（終了→待機→起動） ==========
+Get-CimInstance Win32_Process -Filter "Name = 'chrome.exe'" | ? { $_.CommandLine -match 'gemini-chrome-profile' } | % { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+Start-Sleep -Seconds 3
+& "C:\Program Files\Google\Chrome\Application\chrome.exe" --remote-debugging-port=9222 --remote-debugging-address=0.0.0.0 --user-data-dir="C:\gemini-chrome-profile"
+```
+
+**重要:**
+- `--remote-debugging-address=0.0.0.0` はDockerからの接続に必須
+- `--user-data-dir="C:\gemini-chrome-profile"` で専用プロファイルを使用
+- 終了コマンドは `gemini-chrome-profile` を使用しているChromeのみ終了
+
+### 接続確認
+
+```powershell
+# Windows側から
+curl http://localhost:9222/json/version
+
+# Docker内から
+docker exec -it n8n-n8n-1 curl http://192.168.65.254:9222/json/version
+```
