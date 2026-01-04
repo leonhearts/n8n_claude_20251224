@@ -17,7 +17,7 @@
  *   --goto=URL             gemini url (default: https://gemini.google.com/app)
  *   --timeout=MS           global timeout for waits (default: 180000)
  *   --answerWait=MS        answer wait timeout (default: 180000)
- *   --stabilize=MS         answer stabilize window (default: 6000)
+ *   --stabilize=MS         answer stabilize window (default: 10000)
  *   --screenshot=PATH      screenshot path (default: /home/node/scripts/gemini-auto-result.png)
  *   --noScreenshot         disable screenshot
  *   --mode=MODE            select mode: 'fast' (高速モード) or 'think' (思考モード)
@@ -199,7 +199,7 @@ async function run() {
 
   const globalTimeout = toInt(kv.timeout, 180000);
   const answerWait = toInt(kv.answerWait, 180000);
-  const stabilizeMs = toInt(kv.stabilize, 6000);
+  const stabilizeMs = toInt(kv.stabilize, 10000); // increased for stability
 
   const screenshotPath = kv.screenshot || '/home/node/scripts/gemini-auto-result.png';
   const doScreenshot = !flags.has('--noScreenshot');
@@ -528,14 +528,27 @@ async function run() {
     }
 
     // wait for any ongoing generation to finish before sending (prevents "この回答を停止しました")
+    eprint('[gemini-auto] waiting for idle before sending prompt', idx);
     await waitUntilIdle(globalTimeout);
 
     const mdLocator = page.locator('.markdown');
     const beforeCount = await mdLocator.count();
+    eprint('[gemini-auto] markdown count before:', beforeCount);
 
     await page.waitForSelector('div[role="textbox"]', { timeout: globalTimeout });
     const textbox = page.locator('div[role="textbox"]').first();
+
+    // Wait for textbox to be ready (empty and enabled)
+    await waitForCondition(async () => {
+      const text = await textbox.innerText().catch(() => '');
+      const isEmpty = text.trim() === '' || text.trim() === '\n';
+      return isEmpty;
+    }, { timeoutMs: 30000, intervalMs: 500, label: 'textbox ready' }).catch(() => {
+      eprint('[gemini-auto] textbox not empty, clearing...');
+    });
+
     await textbox.click().catch(() => {});
+    await page.waitForTimeout(300);
     await textbox.fill(textToSend);
 
     const sendButton = page.locator('button[aria-label="送信"], button[aria-label="Send message"]');
@@ -545,9 +558,16 @@ async function run() {
       await page.keyboard.press('Enter');
     }
 
+    eprint('[gemini-auto] prompt sent, waiting for response...');
     await waitForMarkdownIncrease(beforeCount, answerWait);
+    eprint('[gemini-auto] markdown increased, waiting for generation to complete...');
     await waitUntilIdle(answerWait);
+    eprint('[gemini-auto] generation idle, waiting for answer to stabilize...');
     const answer = await waitForAnswerStable(answerWait, stabilizeMs);
+    eprint('[gemini-auto] answer stabilized, length:', answer.length);
+
+    // Additional wait to ensure UI is fully ready for next action
+    await page.waitForTimeout(2000);
 
     return { key: `result_p${idx}`, value: answer || '(No response)' };
   }
