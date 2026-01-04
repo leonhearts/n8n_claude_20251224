@@ -565,18 +565,51 @@ async function run() {
 
     // Wait for any loading indicators to disappear (YouTube video analysis, etc.)
     eprint('[gemini-auto] checking for loading indicators...');
+
+    // Check for Gemini avatar spinner (YouTube loading)
+    const avatarSpinner = page.locator('.avatar_spinner_animation');
+    const spinnerCount = await avatarSpinner.count().catch(() => 0);
+    if (spinnerCount > 0) {
+      eprint('[gemini-auto] found avatar spinner, waiting for it to hide...');
+      await waitForCondition(async () => {
+        // Check if spinner is hidden (opacity: 0 or visibility: hidden)
+        const isHidden = await avatarSpinner.first().evaluate(el => {
+          const style = window.getComputedStyle(el);
+          return style.opacity === '0' || style.visibility === 'hidden';
+        }).catch(() => true);
+        return isHidden;
+      }, { timeoutMs: 120000, intervalMs: 1000, label: 'avatar spinner hidden' }).catch(() => {
+        eprint('[gemini-auto] avatar spinner wait timeout');
+      });
+      eprint('[gemini-auto] avatar spinner cleared');
+    }
+
+    // Also check for lottie animation completion
+    const lottieAnim = page.locator('[data-test-lottie-animation-status]');
+    const lottieCount = await lottieAnim.count().catch(() => 0);
+    if (lottieCount > 0) {
+      eprint('[gemini-auto] found lottie animation, waiting for completion...');
+      await waitForCondition(async () => {
+        const status = await lottieAnim.first().getAttribute('data-test-lottie-animation-status').catch(() => 'completed');
+        return status === 'completed';
+      }, { timeoutMs: 120000, intervalMs: 1000, label: 'lottie animation completed' }).catch(() => {
+        eprint('[gemini-auto] lottie animation wait timeout');
+      });
+      eprint('[gemini-auto] lottie animation completed');
+    }
+
+    // Additional check for mat-spinner and other common loading indicators
     const loadingSelectors = [
       'mat-spinner',
       '.loading-spinner',
       '[role="progressbar"]',
-      '.loading',
       'mat-progress-spinner'
     ];
     for (const sel of loadingSelectors) {
       const spinner = page.locator(sel);
-      const spinnerCount = await spinner.count().catch(() => 0);
-      if (spinnerCount > 0) {
-        eprint('[gemini-auto] found loading indicator:', sel, 'count:', spinnerCount);
+      const count = await spinner.count().catch(() => 0);
+      if (count > 0) {
+        eprint('[gemini-auto] found loading indicator:', sel, 'count:', count);
         await waitForCondition(async () => {
           const c = await spinner.count().catch(() => 0);
           const visible = c > 0 ? await spinner.first().isVisible().catch(() => false) : false;
