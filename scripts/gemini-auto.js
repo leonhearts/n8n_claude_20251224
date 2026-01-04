@@ -562,7 +562,33 @@ async function run() {
     await waitForMarkdownIncrease(beforeCount, answerWait);
     eprint('[gemini-auto] markdown increased, waiting for generation to complete...');
     await waitUntilIdle(answerWait);
-    eprint('[gemini-auto] generation idle, waiting for answer to stabilize...');
+
+    // Wait for any loading indicators to disappear (YouTube video analysis, etc.)
+    eprint('[gemini-auto] checking for loading indicators...');
+    const loadingSelectors = [
+      'mat-spinner',
+      '.loading-spinner',
+      '[role="progressbar"]',
+      '.loading',
+      'mat-progress-spinner'
+    ];
+    for (const sel of loadingSelectors) {
+      const spinner = page.locator(sel);
+      const spinnerCount = await spinner.count().catch(() => 0);
+      if (spinnerCount > 0) {
+        eprint('[gemini-auto] found loading indicator:', sel, 'count:', spinnerCount);
+        await waitForCondition(async () => {
+          const c = await spinner.count().catch(() => 0);
+          const visible = c > 0 ? await spinner.first().isVisible().catch(() => false) : false;
+          return !visible;
+        }, { timeoutMs: 120000, intervalMs: 1000, label: 'loading indicator hidden' }).catch(() => {
+          eprint('[gemini-auto] loading indicator wait timeout');
+        });
+        eprint('[gemini-auto] loading indicator cleared');
+      }
+    }
+
+    eprint('[gemini-auto] waiting for answer to stabilize...');
     const answer = await waitForAnswerStable(answerWait, stabilizeMs);
     eprint('[gemini-auto] answer stabilized, length:', answer.length);
 
