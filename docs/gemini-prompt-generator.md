@@ -69,7 +69,7 @@ Discord Success / Discord Error
 | 項目 | 値 |
 |------|-----|
 | タイプ | Execute Command |
-| コマンド | `node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file --cdp=http://192.168.65.254:9222` |
+| コマンド | `node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file --mode=fast --cdp=http://192.168.65.254:9222` |
 | エラー処理 | continueErrorOutput |
 
 ### 6. Parse Gemini Response

@@ -82,7 +82,7 @@
     },
     {
       "parameters": {
-        "command": "node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file --cdp=http://192.168.65.254:9222"
+        "command": "node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file --mode=fast --cdp=http://192.168.65.254:9222"
       },
       "id": "gemini-browser",
       "name": "Gemini Browser",
