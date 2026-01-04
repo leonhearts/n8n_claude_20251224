@@ -106,6 +106,7 @@ function normalizePrompts(prompts) {
   return prompts.map((p, i) => ({
     index: (p && p.index != null) ? p.index : (i + 1),
     text: (p && p.text != null) ? String(p.text) : '',
+    mode: (p && p.mode) ? String(p.mode) : null, // 'fast', 'think', or null (no change)
   }));
 }
 
@@ -555,6 +556,12 @@ async function run() {
     for (const p of prompts) {
       const idx = p.index ?? '?';
       eprint('[gemini-auto] prompt', idx);
+
+      // Per-prompt mode switch (if specified)
+      if (p.mode && !noModeSwitch) {
+        eprint('[gemini-auto] switching mode for prompt', idx, 'to', p.mode);
+        await ensureMode(p.mode);
+      }
 
       // prompt単位で「target closed」時のみ1回リトライ
       let attempt = 0;
