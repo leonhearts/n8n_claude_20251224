@@ -333,8 +333,24 @@ async function run() {
 
     eprint('[gemini-auto] ensureMode:', mode, '(' + targetLabel + ')');
 
+    // Wait for UI to settle after previous operations
+    await page.waitForTimeout(1000);
+
+    // Scroll to bottom to ensure input area is visible
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
+    await page.waitForTimeout(300);
+
     // Find the mode switch button
     const modeSwitchBtn = page.locator('button.input-area-switch');
+
+    // Wait for button to be available
+    await waitForCondition(async () => {
+      const c = await modeSwitchBtn.count();
+      return c > 0;
+    }, { timeoutMs: 10000, intervalMs: 300, label: 'mode switch button' }).catch(() => {
+      eprint('[gemini-auto] mode switch button not found after waiting');
+    });
+
     const btnCount = await modeSwitchBtn.count();
     if (btnCount === 0) {
       eprint('[gemini-auto] mode switch button not found, skipping mode selection');
@@ -350,10 +366,10 @@ async function run() {
       return;
     }
 
-    // Click to open dropdown menu
+    // Click to open dropdown menu (use evaluate for more reliable click)
     eprint('[gemini-auto] opening mode dropdown...');
-    await modeSwitchBtn.first().click();
-    await page.waitForTimeout(500);
+    await modeSwitchBtn.first().evaluate(el => el.click());
+    await page.waitForTimeout(800);
 
     // Wait for and click the target mode option
     const modeOption = page.locator(`[data-test-id="${targetTestId}"]`);
@@ -365,12 +381,16 @@ async function run() {
     const optionCount = await modeOption.count();
     if (optionCount > 0) {
       eprint('[gemini-auto] clicking mode option:', targetTestId);
-      await modeOption.first().click();
-      await page.waitForTimeout(500);
+      await modeOption.first().evaluate(el => el.click());
+      await page.waitForTimeout(800);
 
       // Verify mode switched
       const newBtnText = await modeSwitchBtn.first().innerText().catch(() => '');
       eprint('[gemini-auto] mode after switch:', newBtnText.trim());
+
+      if (!newBtnText.includes(targetLabel)) {
+        eprint('[gemini-auto] WARNING: mode switch may have failed');
+      }
     } else {
       eprint('[gemini-auto] mode option not found:', targetTestId);
     }
