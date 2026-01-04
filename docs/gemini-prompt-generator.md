@@ -241,3 +241,126 @@ Gemini Browser ─┬─ 成功 → Parse Gemini Response ─┬─ 成功 → U
 - Geminiの応答待ち時間は最大240秒（4分）
 - YouTube URLはGeminiが直接アクセス可能な公開動画のみ対応
 - Chrome CDPは `http://192.168.65.254:9222` で待機している必要がある
+
+---
+
+## 単体テスト
+
+### 基本テスト（PowerShellから実行）
+
+```powershell
+$script = @'
+set -eu
+
+# ① 入力JSONを作る
+cat > /tmp/gemini_input.json << "JSON"
+{
+  "prompts": [
+    { "index": 1, "text": "動作テストです。短く『OK』とだけ返してください。" }
+  ]
+}
+JSON
+
+# ② 事前チェック
+echo "[check] node version:"
+node -v
+
+echo "[check] script syntax:"
+node -c /home/node/scripts/gemini-auto.js
+
+echo "[check] cookie exists?"
+ls -la /home/node/scripts/gemini-cookies.json
+
+# ③ 実行（stdout/stderrをファイルに分離）
+export PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+
+node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file --cdp=http://192.168.65.254:9222 \
+  > /tmp/gemini_stdout.txt \
+  2> /tmp/gemini_stderr.txt
+
+echo "---- STDERR (last 120 lines) ----"
+tail -n 120 /tmp/gemini_stderr.txt || true
+
+echo "---- STDOUT (JSON) ----"
+cat /tmp/gemini_stdout.txt
+
+echo "---- screenshot ----"
+ls -la /home/node/scripts/gemini-auto-result.png 2>/dev/null || true
+'@
+
+# CRLF除去（Windows対策）
+$script = $script -replace "`r",""
+
+# クォート地獄回避：shがstdinからそのまま読む
+$script | docker exec -i n8n-n8n-1 sh -s
+```
+
+### モード切替テスト（高速モード）
+
+```powershell
+$script = @'
+set -eu
+
+cat > /tmp/gemini_input.json << "JSON"
+{
+  "prompts": [
+    { "index": 1, "text": "動作テストです。短く『OK』とだけ返してください。" }
+  ]
+}
+JSON
+
+export PLAYWRIGHT_BROWSERS_PATH=/home/node/.cache/ms-playwright
+
+node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file --mode=fast --cdp=http://192.168.65.254:9222 \
+  > /tmp/gemini_stdout.txt \
+  2> /tmp/gemini_stderr.txt
+
+echo "---- STDERR (last 50 lines) ----"
+tail -n 50 /tmp/gemini_stderr.txt || true
+
+echo "---- STDOUT (JSON) ----"
+cat /tmp/gemini_stdout.txt
+'@
+
+$script = $script -replace "`r",""
+$script | docker exec -i n8n-n8n-1 sh -s
+```
+
+### 期待されるログ出力
+
+**基本テスト:**
+```
+[gemini-auto] start
+[gemini-auto] prompts: 1
+[gemini-auto] no mode specified (keeping current)
+[gemini-auto] mode: CDP connect http://192.168.65.254:9222
+[gemini-auto] goto: https://gemini.google.com/app
+[gemini-auto] url: https://gemini.google.com/app
+[gemini-auto] loggedIn: true
+[gemini-auto] prompt 1
+[gemini-auto] got answer for 1 len= XXX
+[gemini-auto] screenshot saved: /home/node/scripts/gemini-auto-result.png
+```
+
+**モード切替テスト:**
+```
+[gemini-auto] targetMode: fast
+[gemini-auto] ensureMode: fast (高速モード)
+[gemini-auto] current mode button text: 高速モード   ← 既に高速モードの場合
+[gemini-auto] already in target mode: 高速モード
+```
+
+または（思考モードから切り替える場合）:
+```
+[gemini-auto] current mode button text: 思考モード
+[gemini-auto] opening mode dropdown...
+[gemini-auto] clicking mode option: bard-mode-option-高速モード
+[gemini-auto] mode after switch: 高速モード
+```
+
+### スクリプト更新手順
+
+リポジトリからDockerへスクリプトをコピー:
+```powershell
+docker cp C:\script_all\n8n_claude_20251224\scripts\gemini-auto.js n8n-n8n-1:/home/node/scripts/gemini-auto.js
+```
