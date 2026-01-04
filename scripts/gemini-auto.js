@@ -334,65 +334,115 @@ async function run() {
     eprint('[gemini-auto] ensureMode:', mode, '(' + targetLabel + ')');
 
     // Wait for UI to settle after previous operations
-    await page.waitForTimeout(1000);
+    await page.waitForTimeout(1500);
 
-    // Scroll to bottom to ensure input area is visible
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight));
-    await page.waitForTimeout(300);
-
-    // Find the mode switch button
-    const modeSwitchBtn = page.locator('button.input-area-switch');
-
-    // Wait for button to be available
-    await waitForCondition(async () => {
-      const c = await modeSwitchBtn.count();
-      return c > 0;
-    }, { timeoutMs: 10000, intervalMs: 300, label: 'mode switch button' }).catch(() => {
-      eprint('[gemini-auto] mode switch button not found after waiting');
+    // Click somewhere neutral to reset focus, then scroll to bottom
+    await page.evaluate(() => {
+      document.body.click();
+      window.scrollTo(0, document.body.scrollHeight);
     });
+    await page.waitForTimeout(500);
 
-    const btnCount = await modeSwitchBtn.count();
+    // Find the mode switch button - try multiple selectors
+    let modeSwitchBtn = page.locator('button.input-area-switch');
+    let btnCount = await modeSwitchBtn.count();
+
+    eprint('[gemini-auto] mode switch button count:', btnCount);
+
+    if (btnCount === 0) {
+      // Try alternative selector
+      modeSwitchBtn = page.locator('.input-area-switch');
+      btnCount = await modeSwitchBtn.count();
+      eprint('[gemini-auto] alternative selector count:', btnCount);
+    }
+
     if (btnCount === 0) {
       eprint('[gemini-auto] mode switch button not found, skipping mode selection');
+      // Take a debug screenshot
+      try {
+        await page.screenshot({ path: '/home/node/scripts/gemini-mode-debug.png' });
+        eprint('[gemini-auto] debug screenshot saved');
+      } catch (_) {}
       return;
     }
 
     // Check current mode from button text
     const btnText = await modeSwitchBtn.first().innerText().catch(() => '');
-    eprint('[gemini-auto] current mode button text:', btnText.trim());
+    eprint('[gemini-auto] current mode button text: "' + btnText.trim() + '"');
 
     if (btnText.includes(targetLabel)) {
       eprint('[gemini-auto] already in target mode:', targetLabel);
       return;
     }
 
-    // Click to open dropdown menu (use evaluate for more reliable click)
-    eprint('[gemini-auto] opening mode dropdown...');
-    await modeSwitchBtn.first().evaluate(el => el.click());
-    await page.waitForTimeout(800);
+    // Click to open dropdown menu
+    eprint('[gemini-auto] clicking mode switch button to open dropdown...');
+    try {
+      await modeSwitchBtn.first().scrollIntoViewIfNeeded();
+      await page.waitForTimeout(300);
+      await modeSwitchBtn.first().click({ force: true });
+    } catch (e) {
+      eprint('[gemini-auto] click failed, trying evaluate:', e.message);
+      await modeSwitchBtn.first().evaluate(el => el.click());
+    }
+    await page.waitForTimeout(1000);
+
+    // Check if dropdown opened by looking for any menu items
+    const anyMenuItem = page.locator('[role="menuitemradio"]');
+    const menuItemCount = await anyMenuItem.count();
+    eprint('[gemini-auto] menu items found:', menuItemCount);
+
+    if (menuItemCount === 0) {
+      eprint('[gemini-auto] dropdown did not open, retrying click...');
+      await modeSwitchBtn.first().click({ force: true });
+      await page.waitForTimeout(1000);
+    }
 
     // Wait for and click the target mode option
     const modeOption = page.locator(`[data-test-id="${targetTestId}"]`);
-    await waitForCondition(async () => {
-      const c = await modeOption.count();
-      return c > 0;
-    }, { timeoutMs: 10000, intervalMs: 200, label: 'mode option visible' });
+
+    try {
+      await waitForCondition(async () => {
+        const c = await modeOption.count();
+        return c > 0;
+      }, { timeoutMs: 5000, intervalMs: 200, label: 'mode option visible' });
+    } catch (e) {
+      eprint('[gemini-auto] mode option wait failed:', e.message);
+      // Try clicking the dropdown again
+      await modeSwitchBtn.first().click({ force: true });
+      await page.waitForTimeout(1000);
+    }
 
     const optionCount = await modeOption.count();
+    eprint('[gemini-auto] mode option count:', optionCount);
+
     if (optionCount > 0) {
       eprint('[gemini-auto] clicking mode option:', targetTestId);
-      await modeOption.first().evaluate(el => el.click());
-      await page.waitForTimeout(800);
+      try {
+        await modeOption.first().scrollIntoViewIfNeeded();
+        await modeOption.first().click({ force: true });
+      } catch (e) {
+        eprint('[gemini-auto] option click failed, trying evaluate:', e.message);
+        await modeOption.first().evaluate(el => el.click());
+      }
+      await page.waitForTimeout(1000);
 
       // Verify mode switched
       const newBtnText = await modeSwitchBtn.first().innerText().catch(() => '');
-      eprint('[gemini-auto] mode after switch:', newBtnText.trim());
+      eprint('[gemini-auto] mode after switch: "' + newBtnText.trim() + '"');
 
       if (!newBtnText.includes(targetLabel)) {
-        eprint('[gemini-auto] WARNING: mode switch may have failed');
+        eprint('[gemini-auto] WARNING: mode switch may have failed!');
+      } else {
+        eprint('[gemini-auto] mode switch SUCCESS');
       }
     } else {
       eprint('[gemini-auto] mode option not found:', targetTestId);
+      // Take a debug screenshot
+      try {
+        await page.screenshot({ path: '/home/node/scripts/gemini-mode-debug.png' });
+        eprint('[gemini-auto] debug screenshot saved');
+      } catch (_) {}
     }
   }
 
