@@ -103,11 +103,15 @@ function deepFindPrompts(x, depth = 0) {
 }
 
 function normalizePrompts(prompts) {
-  return prompts.map((p, i) => ({
-    index: (p && p.index != null) ? p.index : (i + 1),
-    text: (p && p.text != null) ? String(p.text) : '',
-    mode: (p && p.mode) ? String(p.mode) : null, // 'fast', 'think', or null (no change)
-  }));
+  return prompts.map((p, i) => {
+    const normalized = {
+      index: (p && p.index != null) ? p.index : (i + 1),
+      text: (p && p.text != null) ? String(p.text) : '',
+      mode: (p && p.mode) ? String(p.mode) : null, // 'fast', 'think', or null (no change)
+    };
+    eprint('[gemini-auto] normalizePrompt:', normalized.index, 'mode:', normalized.mode, 'original mode:', p?.mode);
+    return normalized;
+  });
 }
 
 function loadPromptsFromInputText(jsonText) {
