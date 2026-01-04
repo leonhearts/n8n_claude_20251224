@@ -117,6 +117,8 @@ node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file
 | `--stabilize=MS` | 応答安定化待ち時間 | 6000 |
 | `--screenshot=PATH` | スクリーンショット保存先 | `/home/node/scripts/gemini-auto-result.png` |
 | `--noScreenshot` | スクリーンショット無効 | - |
+| `--mode=MODE` | モード選択: `fast`(高速) or `think`(思考) | なし（現状維持） |
+| `--noModeSwitch` | モード切替をスキップ | - |
 
 ### 入力形式
 
@@ -143,14 +145,17 @@ node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file
 1. CDPモードまたはCookieモードでブラウザに接続
 2. `https://gemini.google.com/app` に移動
 3. ログイン状態を確認（未ログインならエラー終了）
-4. 各プロンプトについて:
+4. モード切替（`--mode`指定時のみ）
+   - 現在のモードを確認
+   - 必要に応じて高速モード/思考モードに切替
+5. 各プロンプトについて:
    - 生成中の場合は完了まで待機（停止ボタン非表示を確認）
    - テキストボックス（`div[role="textbox"]`）にプロンプトを入力
    - 送信ボタンをクリック
    - 応答が安定するまで待機（テキストが6秒間変化しなければ完了）
    - `.markdown`要素から最新の応答を取得
-5. スクリーンショット保存（オプション）
-6. 結果をJSON形式で標準出力
+6. スクリーンショット保存（オプション）
+7. 結果をJSON形式で標準出力
 
 ### セレクタ一覧
 
@@ -160,6 +165,9 @@ node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file
 | 送信ボタン | `button[aria-label="送信"], button[aria-label="Send message"]` |
 | 停止ボタン | `button[aria-label*="停止"], button[aria-label*="Stop"]` |
 | 応答エリア | `.markdown` |
+| モード切替ボタン | `button.input-area-switch` |
+| 高速モードオプション | `[data-test-id="bard-mode-option-高速モード"]` |
+| 思考モードオプション | `[data-test-id="bard-mode-option-思考モード"]` |
 
 ---
 

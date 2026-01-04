@@ -20,6 +20,8 @@
  *   --stabilize=MS         answer stabilize window (default: 6000)
  *   --screenshot=PATH      screenshot path (default: /home/node/scripts/gemini-auto-result.png)
  *   --noScreenshot         disable screenshot
+ *   --mode=MODE            select mode: 'fast' (高速モード) or 'think' (思考モード)
+ *   --noModeSwitch         skip mode switching
  *
  * Output:
  *   - stdout: JSON (single line). (results or {error:...})
@@ -200,7 +202,20 @@ async function run() {
   const cdpUrl = kv.cdp || null;
   const headless = !flags.has('--headful'); // only non-CDP
 
+  // Mode selection: --mode=fast or --mode=think
+  const noModeSwitch = flags.has('--noModeSwitch');
+  const modeParam = kv.mode || null; // 'fast' or 'think'
+  // null means no mode switch by default (let user's current mode stay)
+  const targetMode = modeParam; // null, 'fast', or 'think'
+
   eprint('[gemini-auto] prompts:', prompts.length);
+  if (targetMode) {
+    eprint('[gemini-auto] targetMode:', targetMode);
+  } else if (noModeSwitch) {
+    eprint('[gemini-auto] mode switching disabled');
+  } else {
+    eprint('[gemini-auto] no mode specified (keeping current)');
+  }
   if (cdpUrl) eprint('[gemini-auto] mode: CDP connect', cdpUrl);
   else eprint('[gemini-auto] mode: cookie/profile');
 
@@ -306,6 +321,57 @@ async function run() {
       }
       process.stdout.write(JSON.stringify(err) + '\n');
       throw new Error('Not logged in');
+    }
+  }
+
+  // -------- Mode switching (fast mode / think mode) --------
+  async function ensureMode(mode) {
+    // mode: 'fast' or 'think'
+    const targetLabel = mode === 'think' ? '思考モード' : '高速モード';
+    const targetTestId = mode === 'think' ? 'bard-mode-option-思考モード' : 'bard-mode-option-高速モード';
+
+    eprint('[gemini-auto] ensureMode:', mode, '(' + targetLabel + ')');
+
+    // Find the mode switch button
+    const modeSwitchBtn = page.locator('button.input-area-switch');
+    const btnCount = await modeSwitchBtn.count();
+    if (btnCount === 0) {
+      eprint('[gemini-auto] mode switch button not found, skipping mode selection');
+      return;
+    }
+
+    // Check current mode from button text
+    const btnText = await modeSwitchBtn.first().innerText().catch(() => '');
+    eprint('[gemini-auto] current mode button text:', btnText.trim());
+
+    if (btnText.includes(targetLabel)) {
+      eprint('[gemini-auto] already in target mode:', targetLabel);
+      return;
+    }
+
+    // Click to open dropdown menu
+    eprint('[gemini-auto] opening mode dropdown...');
+    await modeSwitchBtn.first().click();
+    await page.waitForTimeout(500);
+
+    // Wait for and click the target mode option
+    const modeOption = page.locator(`[data-test-id="${targetTestId}"]`);
+    await waitForCondition(async () => {
+      const c = await modeOption.count();
+      return c > 0;
+    }, { timeoutMs: 10000, intervalMs: 200, label: 'mode option visible' });
+
+    const optionCount = await modeOption.count();
+    if (optionCount > 0) {
+      eprint('[gemini-auto] clicking mode option:', targetTestId);
+      await modeOption.first().click();
+      await page.waitForTimeout(500);
+
+      // Verify mode switched
+      const newBtnText = await modeSwitchBtn.first().innerText().catch(() => '');
+      eprint('[gemini-auto] mode after switch:', newBtnText.trim());
+    } else {
+      eprint('[gemini-auto] mode option not found:', targetTestId);
     }
   }
 
@@ -480,6 +546,11 @@ async function run() {
 
     eprint('[gemini-auto] goto:', gotoUrl);
     await openGeminiAndValidate();
+
+    // Switch to target mode if specified
+    if (!noModeSwitch && targetMode) {
+      await ensureMode(targetMode);
+    }
 
     for (const p of prompts) {
       const idx = p.index ?? '?';
