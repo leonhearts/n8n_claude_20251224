@@ -22,6 +22,7 @@
  *   --noScreenshot         disable screenshot
  *   --mode=MODE            select mode: 'fast' (高速モード) or 'think' (思考モード)
  *   --noModeSwitch         skip mode switching
+ *   --deleteChat           delete the chat after completion (for production use)
  *
  * Output:
  *   - stdout: JSON (single line). (results or {error:...})
@@ -213,7 +214,13 @@ async function run() {
   // null means no mode switch by default (let user's current mode stay)
   const targetMode = modeParam; // null, 'fast', or 'think'
 
+  // Delete chat after completion (for production)
+  const deleteChat = flags.has('--deleteChat');
+
   eprint('[gemini-auto] prompts:', prompts.length);
+  if (deleteChat) {
+    eprint('[gemini-auto] deleteChat enabled');
+  }
   if (targetMode) {
     eprint('[gemini-auto] targetMode:', targetMode);
   } else if (noModeSwitch) {
@@ -639,6 +646,55 @@ async function run() {
     } catch (_) {}
   }
 
+  async function deleteCurrentChat() {
+    if (!deleteChat) return;
+    eprint('[gemini-auto] deleting current chat...');
+    try {
+      // Click the conversation actions menu button
+      const menuBtn = page.locator('button[data-test-id="actions-menu-button"], button.conversation-actions-menu-button');
+      const menuBtnCount = await menuBtn.count();
+      if (menuBtnCount === 0) {
+        eprint('[gemini-auto] actions menu button not found, skipping delete');
+        return;
+      }
+      await menuBtn.first().click();
+      await page.waitForTimeout(500);
+
+      // Click the delete button
+      const deleteBtn = page.locator('button[data-test-id="delete-button"]');
+      await waitForCondition(async () => {
+        const c = await deleteBtn.count();
+        return c > 0;
+      }, { timeoutMs: 5000, intervalMs: 200, label: 'delete button visible' });
+
+      const deleteBtnCount = await deleteBtn.count();
+      if (deleteBtnCount === 0) {
+        eprint('[gemini-auto] delete button not found, skipping delete');
+        return;
+      }
+      await deleteBtn.first().click();
+      await page.waitForTimeout(500);
+
+      // Click the confirm button in the popup
+      const confirmBtn = page.locator('button[data-test-id="confirm-button"]');
+      await waitForCondition(async () => {
+        const c = await confirmBtn.count();
+        return c > 0;
+      }, { timeoutMs: 5000, intervalMs: 200, label: 'confirm button visible' });
+
+      const confirmBtnCount = await confirmBtn.count();
+      if (confirmBtnCount > 0) {
+        await confirmBtn.first().click();
+        await page.waitForTimeout(1000);
+        eprint('[gemini-auto] chat deleted successfully');
+      } else {
+        eprint('[gemini-auto] confirm button not found, chat may not be deleted');
+      }
+    } catch (e) {
+      eprint('[gemini-auto] failed to delete chat:', e.message);
+    }
+  }
+
   async function closeResources({ cdpMode }) {
     // Always close the page we created (safe)
     try {
@@ -761,6 +817,7 @@ async function run() {
     }
 
     await safeScreenshot();
+    await deleteCurrentChat(); // Delete chat only on success (keep for debugging on error)
     await closeResources({ cdpMode: !!cdpUrl });
 
     // stdout: JSON only
