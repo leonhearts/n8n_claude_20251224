@@ -616,34 +616,69 @@ async function generateImage(page, config) {
   // 画像生成完了を待機
   console.error('Waiting for image generation...');
   let generated = false;
+  let consecutiveErrors = 0;
+  const maxConsecutiveErrors = 3;
+
   for (let i = 0; i < 120; i++) { // 最大240秒
     await page.waitForTimeout(2000);
 
-    // エラーメッセージをチェック（「生成できませんでした」のみ - 誤検出防止）
-    const pageText = await page.evaluate(() => document.body.innerText);
-    if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
-      console.error('Generation error detected on page');
-      throw new Error('Image generation failed: 生成できませんでした');
+    try {
+      // エラーメッセージをチェック（「生成できませんでした」のみ - 誤検出防止）
+      const pageText = await page.evaluate(() => document.body.innerText);
+      consecutiveErrors = 0; // 成功したらリセット
+
+      if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
+        console.error('Generation error detected on page');
+        throw new Error('Image generation failed: 生成できませんでした');
+      }
+    } catch (evalErr) {
+      // ナビゲーションによるコンテキスト破棄エラーをハンドリング
+      if (evalErr.message.includes('Execution context was destroyed') ||
+          evalErr.message.includes('navigation')) {
+        consecutiveErrors++;
+        console.error(`  Page navigation detected (${consecutiveErrors}/${maxConsecutiveErrors}), waiting...`);
+
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          // ページが安定するまで待機
+          console.error('  Multiple navigation errors, waiting for page to stabilize...');
+          await page.waitForTimeout(5000);
+          consecutiveErrors = 0;
+        }
+        continue;
+      }
+      // その他のエラーは再スロー
+      if (evalErr.message.includes('生成できませんでした')) {
+        throw evalErr;
+      }
     }
 
     // 生成された画像を探す
-    const images = await page.$$('img');
-    for (const img of images) {
-      const src = await img.getAttribute('src');
-      if (src && (src.startsWith('data:image') || src.includes('generated') || src.includes('blob:'))) {
+    try {
+      const images = await page.$$('img');
+      for (const img of images) {
+        const src = await img.getAttribute('src');
+        if (src && (src.startsWith('data:image') || src.includes('generated') || src.includes('blob:'))) {
+          generated = true;
+          console.error('Image generated!');
+          break;
+        }
+      }
+      if (generated) break;
+
+      // ダウンロードボタンが表示されたら完了
+      const downloadBtn = await page.$(SELECTORS.downloadButton);
+      if (downloadBtn && await downloadBtn.isVisible()) {
         generated = true;
-        console.error('Image generated!');
+        console.error('Image generated (download button visible)!');
         break;
       }
-    }
-    if (generated) break;
-
-    // ダウンロードボタンが表示されたら完了
-    const downloadBtn = await page.$(SELECTORS.downloadButton);
-    if (downloadBtn && await downloadBtn.isVisible()) {
-      generated = true;
-      console.error('Image generated (download button visible)!');
-      break;
+    } catch (checkErr) {
+      // 画像チェック中のエラーも無視して継続
+      if (checkErr.message.includes('Execution context was destroyed') ||
+          checkErr.message.includes('navigation')) {
+        console.error('  Context error during image check, continuing...');
+        continue;
+      }
     }
 
     if (i % 15 === 14) {
