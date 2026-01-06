@@ -1118,190 +1118,230 @@ async function main() {
     let downloadedFile = null;
 
     // ダウンロードボタンをクリック
-    const downloadBtn = await page.$(SELECTORS.downloadButton);
+    let downloadBtn = await page.$(SELECTORS.downloadButton);
     if (!downloadBtn || !(await downloadBtn.isVisible())) {
       throw new Error('Download button not found or not visible');
     }
 
-    // 方法1: Playwrightのダウンロードイベントを使用（画像と同じアプローチ）
-    console.error('Clicking download button...');
-    try {
-      const downloadPromise = page.waitForEvent('download', { timeout: 120000 });
-      await downloadBtn.click({ force: true });
-      console.error('Clicked download button, waiting for download event...');
+    // ダウンロードボタンをクリックしてエクスポートダイアログを開く
+    console.error('Clicking download button to open export dialog...');
+    await downloadBtn.click({ force: true });
+    await page.waitForTimeout(3000);
 
-      const download = await downloadPromise;
-      console.error('Download started: ' + download.suggestedFilename());
+    // エクスポートダイアログが表示されるまで待機
+    console.error('Waiting for export dialog...');
+    let exportDialogFound = false;
+    let downloadLink = null;
 
-      const downloadUrl = download.url();
-      console.error('Download URL: ' + (downloadUrl ? downloadUrl.substring(0, 100) + '...' : 'null'));
-
-      if (downloadUrl && downloadUrl.startsWith('data:')) {
-        // Base64エンコードの場合、デコードして保存
-        console.error('Decoding Base64 data URL...');
-        const matches = downloadUrl.match(/^data:([^;]+);base64,(.+)$/);
-        if (matches) {
-          const buffer = Buffer.from(matches[2], 'base64');
-          downloadedFile = '/tmp/veo3_download_' + Date.now() + '.mp4';
-          fs.writeFileSync(downloadedFile, buffer);
-          console.error('Base64 decode successful: ' + downloadedFile + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
-        }
-      } else if (downloadUrl && downloadUrl.startsWith('http')) {
-        // HTTP URLの場合、直接ダウンロード
-        console.error('Downloading via HTTP...');
-        downloadedFile = '/tmp/veo3_download_' + Date.now() + '.mp4';
-        await downloadVideo(downloadUrl, downloadedFile);
-      } else {
-        // URLがない場合、saveAsを試す
-        downloadedFile = '/tmp/veo3_download_' + Date.now() + '.mp4';
-        await download.saveAs(downloadedFile);
-        console.error('Saved via saveAs: ' + downloadedFile);
+    for (let i = 0; i < 30; i++) {
+      // ダウンロードリンクを探す
+      downloadLink = await page.$(SELECTORS.exportDownloadLink);
+      if (downloadLink && await downloadLink.isVisible()) {
+        exportDialogFound = true;
+        console.error('Export dialog found after ' + ((i + 1) * 2) + 's');
+        break;
       }
-    } catch (err) {
-      console.error('Download event method failed: ' + err.message);
+
+      // 「閉じる」ボタンも確認（ダイアログが開いている証拠）
+      const closeBtn = await page.$(SELECTORS.exportCloseButton);
+      if (closeBtn && await closeBtn.isVisible()) {
+        exportDialogFound = true;
+        console.error('Export dialog detected (close button visible) after ' + ((i + 1) * 2) + 's');
+        break;
+      }
+
+      if (i % 5 === 4) {
+        console.error('  Waiting for export dialog... ' + ((i + 1) * 2) + 's');
+      }
+      await page.waitForTimeout(2000);
     }
 
-    // 方法2: エクスポートダイアログ経由（シーン拡張ありの場合のフォールバック）
-    if (!downloadedFile) {
-      console.error('Trying export dialog method (fallback)...');
+    if (!exportDialogFound) {
+      console.error('Export dialog not found, taking screenshot...');
+      await page.screenshot({ path: '/tmp/veo3-no-export-dialog.png' });
+    }
 
-      // ネットワークリクエストをインターセプト
-      let capturedDownloadUrl = null;
-      page.on('request', request => {
-        const url = request.url();
-        if ((url.includes('storage.googleapis.com') || url.includes('googleusercontent.com')) &&
-            (url.includes('.mp4') || url.includes('video') || url.includes('download'))) {
-          console.error('Captured URL: ' + url.substring(0, 100) + '...');
-          capturedDownloadUrl = url;
+    // エクスポート完了を待機（プログレス表示が消えるまで）
+    // 長い動画（12シーン等）の場合、エクスポートに5分以上かかる可能性
+    console.error('Waiting for export to complete...');
+    const exportTimeout = Math.max(config.waitTimeout, 600000); // 最低10分
+    const exportStartTime = Date.now();
+    let exportComplete = false;
+
+    while (Date.now() - exportStartTime < exportTimeout) {
+      // ダウンロードリンクを再取得
+      downloadLink = await page.$(SELECTORS.exportDownloadLink);
+
+      if (downloadLink && await downloadLink.isVisible()) {
+        // hrefをチェック
+        const href = await downloadLink.getAttribute('href');
+
+        // 有効なhrefがあればエクスポート完了
+        if (href && (href.startsWith('http') || href.startsWith('data:') || href.startsWith('blob:'))) {
+          exportComplete = true;
+          console.error('Export complete! href ready after ' + Math.round((Date.now() - exportStartTime) / 1000) + 's');
+          console.error('  href: ' + href.substring(0, 80) + '...');
+          break;
         }
-      });
 
-      for (let i = 0; i < 60; i++) {
-        await page.waitForTimeout(2000);
-
-        // ダウンロードリンクを探す
-        const downloadLink = await page.$(SELECTORS.exportDownloadLink);
-        if (downloadLink && await downloadLink.isVisible()) {
-          console.error('Export dialog found!');
-
-          // hrefが設定されるまで待機（エクスポート完了を待つ）
-          // waitTimeoutを使用（デフォルト600秒 = 10分）
-          // ただしnullが30回（60秒）続いたらダウンロードクリック方式に移行
-          const maxHrefChecks = Math.max(30, Math.floor(config.waitTimeout / 2000));
-          let href = null;
-          let nullCount = 0;
-          const maxNullCount = 30; // nullが30回続いたら諦める（60秒）
-          for (let j = 0; j < maxHrefChecks; j++) {
-            href = await downloadLink.getAttribute('href');
-            if (j % 10 === 0 || (href && (href.startsWith('http') || href.startsWith('data:') || href.startsWith('blob:')))) {
-              console.error('  href check ' + j + '/' + maxHrefChecks + ': ' + (href ? href.substring(0, 80) + '...' : 'null') + ' (nullCount: ' + nullCount + ')');
-            }
-
-            if (href && (href.startsWith('http') || href.startsWith('data:') || href.startsWith('blob:'))) {
-              console.error('  href is ready!');
-              break;
-            }
-
-            // nullが続く場合のカウント
-            if (!href || href === '' || href === 'javascript:void(0)') {
-              nullCount++;
-              if (nullCount >= maxNullCount) {
-                console.error('  href stayed null for ' + nullCount + ' checks (' + (nullCount * 2) + 's), proceeding to click download...');
-                break;
-              }
-            } else {
-              nullCount = 0; // 何か値があればリセット
-            }
-
-            await page.waitForTimeout(2000);
-          }
-
-          // HTTP URLの場合、直接ダウンロード
-          if (href && href.startsWith('http')) {
-            console.error('Downloading via HTTP URL...');
-            downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
-            await downloadVideo(href, downloadedFile);
+        // ダウンロードリンクのテキストを確認（「準備中」→「ダウンロード」になるまで）
+        const linkText = await downloadLink.textContent();
+        if (linkText && !linkText.includes('準備') && !linkText.includes('Processing') && !linkText.includes('...')) {
+          // リンクテキストが準備中でなければ、クリック可能かもしれない
+          const isDisabled = await downloadLink.getAttribute('disabled');
+          const ariaDisabled = await downloadLink.getAttribute('aria-disabled');
+          if (!isDisabled && ariaDisabled !== 'true') {
+            console.error('Download link appears ready (text: ' + linkText + ')');
+            exportComplete = true;
             break;
           }
+        }
+      }
 
-          // data URLの場合、Base64デコード
-          if (href && href.startsWith('data:')) {
-            console.error('Decoding data URL...');
-            const matches = href.match(/^data:([^;]+);base64,(.+)$/);
+      // プログレス表示を確認
+      const pageText = await page.evaluate(() => document.body.innerText);
+      const hasProgress = pageText.includes('エクスポート中') ||
+                          pageText.includes('Exporting') ||
+                          pageText.includes('Processing') ||
+                          pageText.includes('準備中');
+
+      const elapsed = Math.round((Date.now() - exportStartTime) / 1000);
+      if (elapsed % 30 === 0) {
+        console.error('  Export in progress... ' + elapsed + 's (progress indicator: ' + hasProgress + ')');
+      }
+
+      await page.waitForTimeout(5000);
+    }
+
+    if (!exportComplete) {
+      console.error('Export may not be complete, but proceeding with download attempt...');
+      await page.screenshot({ path: '/tmp/veo3-export-timeout.png' });
+    }
+
+    // ネットワークリクエストをインターセプト（ダウンロードURL捕捉用）
+    let capturedDownloadUrl = null;
+    page.on('request', request => {
+      const url = request.url();
+      if ((url.includes('storage.googleapis.com') || url.includes('googleusercontent.com')) &&
+          (url.includes('.mp4') || url.includes('video') || url.includes('download'))) {
+        console.error('Captured URL: ' + url.substring(0, 100) + '...');
+        capturedDownloadUrl = url;
+      }
+    });
+
+    // 方法1: ダウンロードリンクのhrefから直接取得
+    downloadLink = await page.$(SELECTORS.exportDownloadLink);
+    if (downloadLink && await downloadLink.isVisible()) {
+      const href = await downloadLink.getAttribute('href');
+      console.error('Download link href: ' + (href ? href.substring(0, 80) + '...' : 'null'));
+
+      // HTTP URLの場合、直接ダウンロード
+      if (href && href.startsWith('http')) {
+        console.error('Downloading via HTTP URL...');
+        downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
+        try {
+          await downloadVideo(href, downloadedFile);
+        } catch (err) {
+          console.error('HTTP download failed: ' + err.message);
+          downloadedFile = null;
+        }
+      }
+
+      // data URLの場合、Base64デコード
+      if (!downloadedFile && href && href.startsWith('data:')) {
+        console.error('Decoding data URL...');
+        const matches = href.match(/^data:([^;]+);base64,(.+)$/);
+        if (matches) {
+          const buffer = Buffer.from(matches[2], 'base64');
+          downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
+          fs.writeFileSync(downloadedFile, buffer);
+          console.error('Base64 decode: ' + downloadedFile + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
+        }
+      }
+
+      // blob URLの場合、fetch経由で取得
+      if (!downloadedFile && href && href.startsWith('blob:')) {
+        console.error('Fetching blob URL...');
+        try {
+          const dataUrl = await page.evaluate(async (blobUrl) => {
+            const response = await fetch(blobUrl);
+            const blob = await response.blob();
+            return new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onloadend = () => resolve(reader.result);
+              reader.readAsDataURL(blob);
+            });
+          }, href);
+
+          if (dataUrl && dataUrl.startsWith('data:')) {
+            const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
             if (matches) {
               const buffer = Buffer.from(matches[2], 'base64');
               downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
               fs.writeFileSync(downloadedFile, buffer);
-              console.error('Base64 decode: ' + downloadedFile + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
-              break;
+              console.error('Blob fetch successful: ' + downloadedFile + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
             }
           }
-
-          // blob URLの場合、fetch経由で取得
-          if (href && href.startsWith('blob:')) {
-            console.error('Fetching blob URL...');
-            try {
-              const dataUrl = await page.evaluate(async (blobUrl) => {
-                const response = await fetch(blobUrl);
-                const blob = await response.blob();
-                return new Promise((resolve) => {
-                  const reader = new FileReader();
-                  reader.onloadend = () => resolve(reader.result);
-                  reader.readAsDataURL(blob);
-                });
-              }, href);
-
-              if (dataUrl && dataUrl.startsWith('data:')) {
-                const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
-                if (matches) {
-                  const buffer = Buffer.from(matches[2], 'base64');
-                  downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
-                  fs.writeFileSync(downloadedFile, buffer);
-                  console.error('Blob fetch successful: ' + downloadedFile + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
-                  break;
-                }
-              }
-            } catch (e) {
-              console.error('Blob fetch failed: ' + e.message);
-            }
-          }
-
-          // hrefがない場合、クリックしてダウンロードイベントを待つ
-          console.error('Trying click download (href was: ' + (href || 'null') + ')...');
-          try {
-            const dlPromise = page.waitForEvent('download', { timeout: 60000 });
-            await downloadLink.evaluate(el => el.click());
-            const dl = await dlPromise;
-            const dlUrl = dl.url();
-            console.error('Download URL from click: ' + (dlUrl ? dlUrl.substring(0, 80) + '...' : 'null'));
-
-            if (dlUrl && dlUrl.startsWith('data:')) {
-              const matches = dlUrl.match(/^data:([^;]+);base64,(.+)$/);
-              if (matches) {
-                const buffer = Buffer.from(matches[2], 'base64');
-                downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
-                fs.writeFileSync(downloadedFile, buffer);
-                console.error('Base64 decode: ' + downloadedFile);
-              }
-            } else if (dlUrl) {
-              downloadedFile = '/tmp/veo3_export_' + Date.now() + '.mp4';
-              await downloadVideo(dlUrl, downloadedFile);
-            }
-          } catch (e) {
-            console.error('Export download failed: ' + e.message);
-          }
-          break;
-        }
-
-        if (i % 10 === 9) {
-          console.error('Waiting for export... (' + ((i + 1) * 2) + 's)');
+        } catch (err) {
+          console.error('Blob fetch failed: ' + err.message);
         }
       }
     }
 
-    // 方法3: Chromeがダウンロードしたファイルを探す（Windowsダウンロードフォルダ経由）
+    // 方法2: ダウンロードリンクをクリックしてイベント待機
     if (!downloadedFile) {
-      console.error('Trying to find Chrome downloaded file (method 3)...');
+      console.error('Trying click download method...');
+      downloadLink = await page.$(SELECTORS.exportDownloadLink);
+
+      if (downloadLink && await downloadLink.isVisible()) {
+        try {
+          const downloadPromise = page.waitForEvent('download', { timeout: 180000 }); // 3分に延長
+          await downloadLink.evaluate(el => el.click());
+          console.error('Clicked download link, waiting for download event...');
+
+          const download = await downloadPromise;
+          console.error('Download started: ' + download.suggestedFilename());
+
+          const downloadUrl = download.url();
+          console.error('Download URL: ' + (downloadUrl ? downloadUrl.substring(0, 100) + '...' : 'null'));
+
+          if (downloadUrl && downloadUrl.startsWith('data:')) {
+            const matches = downloadUrl.match(/^data:([^;]+);base64,(.+)$/);
+            if (matches) {
+              const buffer = Buffer.from(matches[2], 'base64');
+              downloadedFile = '/tmp/veo3_download_' + Date.now() + '.mp4';
+              fs.writeFileSync(downloadedFile, buffer);
+              console.error('Base64 decode successful: ' + downloadedFile + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
+            }
+          } else if (downloadUrl && downloadUrl.startsWith('http')) {
+            downloadedFile = '/tmp/veo3_download_' + Date.now() + '.mp4';
+            await downloadVideo(downloadUrl, downloadedFile);
+          } else {
+            downloadedFile = '/tmp/veo3_download_' + Date.now() + '.mp4';
+            await download.saveAs(downloadedFile);
+            console.error('Saved via saveAs: ' + downloadedFile);
+          }
+        } catch (err) {
+          console.error('Click download method failed: ' + err.message);
+        }
+      }
+    }
+
+    // 方法3: キャプチャしたURLを使用
+    if (!downloadedFile && capturedDownloadUrl) {
+      console.error('Trying captured URL: ' + capturedDownloadUrl.substring(0, 80) + '...');
+      downloadedFile = '/tmp/veo3_captured_' + Date.now() + '.mp4';
+      try {
+        await downloadVideo(capturedDownloadUrl, downloadedFile);
+      } catch (err) {
+        console.error('Captured URL download failed: ' + err.message);
+        downloadedFile = null;
+      }
+    }
+
+    // 方法4: Chromeがダウンロードしたファイルを探す（Windowsダウンロードフォルダ経由）
+    if (!downloadedFile) {
+      console.error('Trying to find Chrome downloaded file (method 4)...');
 
       // Windowsダウンロードフォルダのマウントポイント（/tmpは除外 - 無関係なファイルが多すぎる）
       const downloadDirs = [

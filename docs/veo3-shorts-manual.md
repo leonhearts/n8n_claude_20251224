@@ -348,33 +348,39 @@ for (const icon of closeIcons) {
 
 **問題:** `--remote-debugging-address=0.0.0.0`使用時、Chromeのダウンロードマネージャーが正常動作しない
 
-**解決策:** 3段階のフォールバック
+**解決策:** エクスポート完了待機 + 4段階のフォールバック
 
 ```
-方法1: Playwrightダウンロードイベント
-  ↓ 失敗時
-方法2: エクスポートダイアログのhref取得
-  ↓ href取得タイムアウト（60秒）
-方法3: ダウンロードリンクをクリックしてBase64デコード
+1. ダウンロードボタンクリック → エクスポートダイアログ表示待機
+2. エクスポート完了待機（href準備完了 or プログレス表示消失まで、最低10分）
+   ↓ 完了後
+方法1: hrefから直接ダウンロード（HTTP/data/blob URL対応）
+   ↓ 失敗時
+方法2: ダウンロードリンクをクリックしてイベント待機（3分）
+   ↓ 失敗時
+方法3: キャプチャしたネットワークURLを使用
+   ↓ 失敗時
+方法4: Chromeダウンロードフォルダ（/mnt/downloads）を検索
 ```
 
-**href早期終了:**
+**エクスポート完了の判定:**
 ```javascript
-// hrefがnullのまま30回（60秒）続いたら諦める
-let nullCount = 0;
-for (let j = 0; j < maxHrefChecks; j++) {
-  href = await downloadLink.getAttribute('href');
-  if (!href) {
-    nullCount++;
-    if (nullCount >= 30) {
-      console.error('href stayed null, proceeding to click download...');
-      break;
-    }
-  }
+// 有効なhrefがあればエクスポート完了
+if (href && (href.startsWith('http') || href.startsWith('data:') || href.startsWith('blob:'))) {
+  exportComplete = true;
+}
+
+// または、ダウンロードリンクのテキストが「準備中」でなくなったら完了
+const linkText = await downloadLink.textContent();
+if (!linkText.includes('準備') && !linkText.includes('Processing')) {
+  exportComplete = true;
 }
 ```
 
-以前は300回（600秒）待機していたが、hrefが設定されない場合は60秒でクリック方式に移行するよう最適化。
+**長い動画（12シーン以上）の場合:**
+- エクスポートに5分以上かかる可能性があるため、最低10分のタイムアウトを設定
+- 30秒ごとにプログレス状況をログ出力
+- タイムアウト時はスクリーンショットを保存（`/tmp/veo3-export-timeout.png`）
 
 ### n8nワークフロー統合のベストプラクティス
 
@@ -452,6 +458,7 @@ PowerShellでのコマンド実行時、JSONの形式に注意してください
 
 ## 更新履歴
 
+- **2026-01-06**: ダウンロードロジック大幅改善 - エクスポート完了待機（最低10分）、4段階フォールバック、長時間動画（12シーン等）対応
 - **2025-12-30**: downloadパラメータ追加（n8n連携向け）、既存画像自動削除機能、href早期終了最適化、技術的解説セクション追加
 - **2025-12-29**: 画像生成モード追加（出力数・縦横比設定対応）、動画生成のvideoCount=1でシーン拡張スキップ、projectUrl対応
 - **2025-12-29**: Base64ダウンロード対応、シーンビルダー遷移修正
