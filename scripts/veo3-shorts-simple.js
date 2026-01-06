@@ -1007,14 +1007,21 @@ async function extendScene(page, config, index) {
  * メイン処理
  */
 async function main() {
-  const input = process.argv[2];
+  let input = process.argv[2];
   let config = { ...DEFAULT_CONFIG };
 
   if (input) {
     try {
+      // ファイルパスの場合はファイルから読み込む
+      if (input.startsWith('/') || input.endsWith('.json')) {
+        if (fs.existsSync(input)) {
+          input = fs.readFileSync(input, 'utf8');
+          console.error('Read config from file: ' + process.argv[2]);
+        }
+      }
       config = { ...config, ...JSON.parse(input) };
     } catch (e) {
-      console.log(JSON.stringify({ error: 'Invalid JSON' }));
+      console.log(JSON.stringify({ error: 'Invalid JSON: ' + e.message }));
       process.exit(1);
     }
   }
