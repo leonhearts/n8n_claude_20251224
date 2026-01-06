@@ -1,0 +1,547 @@
+{
+  "name": "Veo3 Multi-Scene Video Generator v4 (Clean)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "b68b6367-56e5-45c3-ae2b-32d93b344dc9",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ",
+          "mode": "list",
+          "cachedResultName": "廃墟チャンネルマスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "シート1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "Plan"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "bcc8409d-febc-429f-b0e0-95e0e911b820",
+      "name": "Read Spreadsheet",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [220, 300],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract valid prompt pairs from spreadsheet row\nconst row = $input.first().json;\nconst promptPairs = [];\n\n// Check up to 16 pairs\nfor (let i = 1; i <= 16; i++) {\n  const imagePrompt = row['image_prompt' + i];\n  const videoPrompt = row['video_prompt' + i];\n  \n  // Only add if both prompts exist and are not empty\n  if (imagePrompt && imagePrompt.trim() && videoPrompt && videoPrompt.trim()) {\n    promptPairs.push({\n      index: i,\n      imagePrompt: imagePrompt.trim(),\n      videoPrompt: videoPrompt.trim(),\n      isFirst: promptPairs.length === 0,\n      isLast: false\n    });\n  }\n}\n\nif (promptPairs.length === 0) {\n  throw new Error('No valid prompt pairs found');\n}\n\n// Mark the last pair\npromptPairs[promptPairs.length - 1].isLast = true;\n\nreturn [{\n  json: {\n    rowNumber: row.row_number || row.$rowIndex + 2,\n    promptPairs: promptPairs,\n    totalScenes: promptPairs.length,\n    originalRow: row\n  }\n}];"
+      },
+      "id": "4a2c671e-df1b-48cf-8a1e-29ad72458e32",
+      "name": "Extract Prompt Pairs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [440, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ",
+          "mode": "list",
+          "cachedResultName": "廃墟チャンネルマスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "シート1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "search_url": "={{ $json.originalRow.search_url }}"
+          },
+          "matchingColumns": ["search_url"],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "eeeed0f2-9ff9-4e81-88e9-279ddd1a0a9f",
+      "name": "Update Status Processing",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [660, 300],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "=cat > /tmp/veo3_config.json << 'EOF'\n{{ JSON.stringify({ mode: \"image\", prompt: $('Extract Prompt Pairs').first().json.promptPairs[0].imagePrompt, outputPath: \"/tmp/veo3_scene.png\" }) }}\nEOF\nnode /home/node/veo3-shorts-simple.js /tmp/veo3_config.json"
+      },
+      "id": "a3fb8105-96c6-43b2-a660-5860dd406d7f",
+      "name": "Generate First Image",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse image generation result\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  // Find JSON in output (may have console.error messages before it)\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse image result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Image generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevData = $('Extract Prompt Pairs').item.json;\n\nreturn [{\n  json: {\n    projectUrl: result.projectUrl,\n    imagePath: result.outputPath,\n    promptPairs: prevData.promptPairs,\n    totalScenes: prevData.totalScenes,\n    rowNumber: prevData.rowNumber\n  }\n}];"
+      },
+      "id": "af28151a-0ca5-4ddb-92a9-ef06619e96c5",
+      "name": "Parse First Image Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ",
+          "mode": "list",
+          "cachedResultName": "廃墟チャンネルマスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "シート1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "search_url": "={{ $('Read Spreadsheet').first().json.search_url }}",
+            "projectUrl": "{{ $json.projectUrl }}"
+          },
+          "matchingColumns": ["search_url"],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "735d9010-fd1a-40d0-9cb9-f2e56a4a9066",
+      "name": "Write ProjectURL",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1320, 300],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "command": "=cat > /tmp/veo3_config.json << 'EOF'\n{{ JSON.stringify({ mode: \"frame\", prompt: $('Parse First Image Result').first().json.promptPairs[0].videoPrompt, imagePath: \"/tmp/veo3_scene.png\", projectUrl: $('Parse First Image Result').first().json.projectUrl, download: $('Parse First Image Result').first().json.promptPairs[0].isLast, outputPath: \"/tmp/veo3_final.mp4\" }) }}\nEOF\nnode /home/node/veo3-shorts-simple.js /tmp/veo3_config.json"
+      },
+      "id": "2c967a44-0133-45db-8abd-7a2a888fad37",
+      "name": "Generate First Video",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [1540, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse video result and prepare for loop or completion\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse video result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Video generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevData = $('Parse First Image Result').item.json;\nconst promptPairs = prevData.promptPairs;\n\n// If first scene was the only scene\nif (promptPairs[0].isLast) {\n  return [{\n    json: {\n      completed: true,\n      outputPath: result.outputPath,\n      projectUrl: result.projectUrl,\n      totalScenes: 1,\n      rowNumber: prevData.rowNumber\n    }\n  }];\n}\n\n// Prepare remaining scenes for loop\nconst remainingPairs = promptPairs.slice(1);\nreturn remainingPairs.map((pair, idx) => ({\n  json: {\n    completed: false,\n    imagePrompt: pair.imagePrompt,\n    videoPrompt: pair.videoPrompt,\n    isLast: pair.isLast,\n    sceneIndex: pair.index,\n    projectUrl: result.projectUrl,\n    rowNumber: prevData.rowNumber,\n    totalScenes: prevData.totalScenes\n  }\n}));"
+      },
+      "id": "5a33364a-d69a-4f16-8f20-d2553e5da4b3",
+      "name": "Prepare Loop",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-completed",
+              "leftValue": "={{ $json.completed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "7c279b13-dccb-4a61-aa5b-8b4bf277dc6d",
+      "name": "IF Completed",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1980, 300]
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "id": "e26178ab-9ed2-4d3d-9b9c-987a260ee42a",
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [2200, 500]
+    },
+    {
+      "parameters": {
+        "command": "=cat > /tmp/veo3_config.json << 'EOF'\n{{ JSON.stringify({ mode: \"image\", prompt: $json.imagePrompt, outputPath: \"/tmp/veo3_scene.png\", projectUrl: $json.projectUrl }) }}\nEOF\nnode /home/node/veo3-shorts-simple.js /tmp/veo3_config.json"
+      },
+      "id": "bb5be68f-d1f6-4c21-8fde-d0c80693deb1",
+      "name": "Generate Image (Loop)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [2420, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse loop image result\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse image result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Image generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevItem = $('Loop Over Items').item.json;\n\nreturn [{\n  json: {\n    videoPrompt: prevItem.videoPrompt,\n    isLast: prevItem.isLast,\n    sceneIndex: prevItem.sceneIndex,\n    projectUrl: result.projectUrl,\n    rowNumber: prevItem.rowNumber,\n    totalScenes: prevItem.totalScenes\n  }\n}];"
+      },
+      "id": "ef2a68f1-cfe4-46fe-8d81-8a7ae8c3798d",
+      "name": "Parse Image (Loop)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2640, 500]
+    },
+    {
+      "parameters": {
+        "command": "=cat > /tmp/veo3_config.json << 'EOF'\n{{ JSON.stringify({ mode: \"frame\", prompt: $json.videoPrompt, imagePath: \"/tmp/veo3_scene.png\", projectUrl: $json.projectUrl, download: $json.isLast, outputPath: \"/tmp/veo3_final.mp4\" }) }}\nEOF\nnode /home/node/veo3-shorts-simple.js /tmp/veo3_config.json"
+      },
+      "id": "2a2f74cd-71ea-46bd-941a-4df44c5c99ac",
+      "name": "Generate Video (Loop)",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [2860, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse loop video result and check if done\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse video result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Video generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevItem = $('Parse Image (Loop)').item.json;\n\n// If this was the last scene, go to upload\nif (prevItem.isLast) {\n  return [{\n    json: {\n      completed: true,\n      outputPath: result.outputPath,\n      projectUrl: result.projectUrl,\n      sceneIndex: prevItem.sceneIndex,\n      rowNumber: prevItem.rowNumber,\n      totalScenes: prevItem.totalScenes\n    }\n  }];\n}\n\n// Not the last scene - continue loop\nreturn [{\n  json: {\n    completed: false,\n    projectUrl: result.projectUrl,\n    sceneIndex: prevItem.sceneIndex,\n    rowNumber: prevItem.rowNumber,\n    totalScenes: prevItem.totalScenes\n  }\n}];"
+      },
+      "id": "5ad50e60-d9fc-4e2b-b833-3af8774b8edb",
+      "name": "Parse Video (Loop)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3080, 500]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-last",
+              "leftValue": "={{ $json.completed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "34c49af7-6669-4825-94f4-f884edaf5237",
+      "name": "IF Last Scene",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3300, 500]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Prepare data for file reading and upload\nlet rowNumber, totalScenes, projectUrl;\n\ntry {\n  const loopData = $('Parse Video (Loop)').item?.json;\n  if (loopData) {\n    rowNumber = loopData.rowNumber;\n    totalScenes = loopData.totalScenes;\n    projectUrl = loopData.projectUrl;\n  }\n} catch (e) {\n  try {\n    const directData = $('Prepare Loop').item?.json;\n    if (directData) {\n      rowNumber = directData.rowNumber;\n      totalScenes = directData.totalScenes;\n      projectUrl = directData.projectUrl;\n    }\n  } catch (e2) {}\n}\n\nreturn [{\n  json: {\n    rowNumber: rowNumber,\n    totalScenes: totalScenes,\n    projectUrl: projectUrl,\n    filePath: '/tmp/veo3_final.mp4'\n  }\n}];"
+      },
+      "id": "8eeee4fe-02a2-466d-a78b-2024c3674da2",
+      "name": "Read Video File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, 300]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.filePath }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [2420, 300],
+      "id": "1b0f607a-3824-479d-a605-b365a52bb31e",
+      "name": "Read Binary File"
+    },
+    {
+      "parameters": {
+        "name": "=veo3_{{ $now.format('yyyyMMdd_HHmmss') }}.mp4",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "https://drive.google.com/drive/folders/1lpyK2P7_mbMzQ74IkA2f4leDnuHs7CO_",
+          "mode": "url"
+        },
+        "options": {}
+      },
+      "id": "975c66bc-76e5-4b8f-9a29-1ef23d0bae81",
+      "name": "Upload to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2640, 300],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "SxFWwEDsUgCoW69A",
+          "name": "Google Drive tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get Drive URL from upload result\nconst fileId = $input.first().json.id;\nconst driveUrl = 'https://drive.google.com/file/d/' + fileId + '/view';\n\n// Get previous data\nconst prevData = $('Read Video File').item.json;\n\nreturn [{\n  json: {\n    driveUrl: driveUrl,\n    fileId: fileId,\n    rowNumber: prevData.rowNumber,\n    totalScenes: prevData.totalScenes,\n    projectUrl: prevData.projectUrl\n  }\n}];"
+      },
+      "id": "a5e3d27c-0150-43b4-b1a2-a9920cc1ecd6",
+      "name": "Get Drive URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2860, 300]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ",
+          "mode": "list",
+          "cachedResultName": "廃墟チャンネルマスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "シート1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "search_url": "={{ $('Read Spreadsheet').first().json.search_url }}",
+            "status": "Completed",
+            "drive_url": "={{ $json.driveUrl }}"
+          },
+          "matchingColumns": ["search_url"],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "320136fe-985a-4b18-a9a8-c7632113ee7b",
+      "name": "Update Status Completed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [3080, 300],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "=Veo3 Complete\n\nScenes: {{ $json.search_url }}\nDrive: {{ $json.drive_url }}",
+        "options": {}
+      },
+      "id": "ea83f320-be30-4a52-9e48-f615217861ee",
+      "name": "Discord Success",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [3300, 300],
+      "webhookId": "3de4a46f-b3c7-4d1c-9e38-353ed6af33c7",
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "rt0K8qLyVG6wH6wB",
+          "name": "Discord Webhook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Main Flow\nFirst image → First video → Check completion"
+      },
+      "id": "sticky-main",
+      "name": "Sticky Note",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [0, 180],
+      "parameters": {
+        "width": 1980,
+        "height": 100,
+        "color": 4
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Upload & Complete\nRead file → Upload → Update sheet → Notify"
+      },
+      "id": "sticky-upload",
+      "name": "Sticky Note1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2200, 180],
+      "parameters": {
+        "width": 1300,
+        "height": 100,
+        "color": 5
+      }
+    },
+    {
+      "parameters": {
+        "content": "## Loop (Remaining Scenes)\nGenerate image → Generate video → Check if last"
+      },
+      "id": "sticky-loop",
+      "name": "Sticky Note2",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2200, 380],
+      "parameters": {
+        "width": 1300,
+        "height": 100,
+        "color": 6
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger": {
+      "main": [[{"node": "Read Spreadsheet", "type": "main", "index": 0}]]
+    },
+    "Read Spreadsheet": {
+      "main": [[{"node": "Extract Prompt Pairs", "type": "main", "index": 0}]]
+    },
+    "Extract Prompt Pairs": {
+      "main": [[{"node": "Update Status Processing", "type": "main", "index": 0}]]
+    },
+    "Update Status Processing": {
+      "main": [[{"node": "Generate First Image", "type": "main", "index": 0}]]
+    },
+    "Generate First Image": {
+      "main": [[{"node": "Parse First Image Result", "type": "main", "index": 0}]]
+    },
+    "Parse First Image Result": {
+      "main": [[{"node": "Write ProjectURL", "type": "main", "index": 0}]]
+    },
+    "Write ProjectURL": {
+      "main": [[{"node": "Generate First Video", "type": "main", "index": 0}]]
+    },
+    "Generate First Video": {
+      "main": [[{"node": "Prepare Loop", "type": "main", "index": 0}]]
+    },
+    "Prepare Loop": {
+      "main": [[{"node": "IF Completed", "type": "main", "index": 0}]]
+    },
+    "IF Completed": {
+      "main": [
+        [{"node": "Read Video File", "type": "main", "index": 0}],
+        [{"node": "Loop Over Items", "type": "main", "index": 0}]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [{"node": "Read Video File", "type": "main", "index": 0}],
+        [{"node": "Generate Image (Loop)", "type": "main", "index": 0}]
+      ]
+    },
+    "Generate Image (Loop)": {
+      "main": [[{"node": "Parse Image (Loop)", "type": "main", "index": 0}]]
+    },
+    "Parse Image (Loop)": {
+      "main": [[{"node": "Generate Video (Loop)", "type": "main", "index": 0}]]
+    },
+    "Generate Video (Loop)": {
+      "main": [[{"node": "Parse Video (Loop)", "type": "main", "index": 0}]]
+    },
+    "Parse Video (Loop)": {
+      "main": [[{"node": "IF Last Scene", "type": "main", "index": 0}]]
+    },
+    "IF Last Scene": {
+      "main": [
+        [{"node": "Read Video File", "type": "main", "index": 0}],
+        [{"node": "Loop Over Items", "type": "main", "index": 0}]
+      ]
+    },
+    "Read Video File": {
+      "main": [[{"node": "Read Binary File", "type": "main", "index": 0}]]
+    },
+    "Read Binary File": {
+      "main": [[{"node": "Upload to Drive", "type": "main", "index": 0}]]
+    },
+    "Upload to Drive": {
+      "main": [[{"node": "Get Drive URL", "type": "main", "index": 0}]]
+    },
+    "Get Drive URL": {
+      "main": [[{"node": "Update Status Completed", "type": "main", "index": 0}]]
+    },
+    "Update Status Completed": {
+      "main": [[{"node": "Discord Success", "type": "main", "index": 0}]]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": ""
+  },
+  "staticData": null,
+  "tags": [],
+  "triggerCount": 0,
+  "updatedAt": "2025-01-06T00:00:00.000Z",
+  "versionId": "4"
+}
