@@ -98,6 +98,95 @@ docker exec n8n-n8n-1 curl -s http://192.168.65.254:9222/json/version
 
 ---
 
+## Chrome再起動の自動化（n8n連携）
+
+Chromeのセッションが不安定になった場合、n8nから自動的にChromeを再起動できます。
+
+### 1. HTTPサーバーの起動
+
+Windows上でPowerShellスクリプトを実行します（管理者権限推奨）：
+
+```powershell
+# スクリプトをダウンロードした場所に移動
+cd C:\script_all\n8n_claude_20251224\scripts
+
+# サーバー起動
+.\chrome-restart-server.ps1
+```
+
+**出力例：**
+```
+==========================================
+ Chrome Restart Server Started
+==========================================
+ Listening on: http://+:8888/
+ Endpoints:
+   GET /restart-chrome  - Restart Chrome
+   GET /status          - Check Chrome status
+   GET /stop            - Stop this server
+
+ From n8n (Docker):
+   http://host.docker.internal:8888/restart-chrome
+==========================================
+```
+
+### 2. Windowsスタートアップに登録（推奨）
+
+サーバーをWindowsログイン時に自動起動するには：
+
+1. `Win + R` → `shell:startup` を実行
+2. ショートカットを作成:
+   - 対象: `powershell.exe -ExecutionPolicy Bypass -File "C:\script_all\n8n_claude_20251224\scripts\chrome-restart-server.ps1"`
+   - 名前: `Chrome Restart Server`
+
+### 3. n8nからの呼び出し
+
+**HTTP Requestノードの設定：**
+
+| 項目 | 値 |
+|------|-----|
+| Method | GET |
+| URL | `http://host.docker.internal:8888/restart-chrome` |
+
+**レスポンス例：**
+```json
+{
+  "success": true,
+  "message": "Chrome restarted successfully",
+  "processCount": 8
+}
+```
+
+### 4. エンドポイント一覧
+
+| エンドポイント | 説明 |
+|---------------|------|
+| `/restart-chrome` | Chromeを再起動（終了→起動） |
+| `/status` | Chromeの状態確認（起動中か、ポート9222でリッスン中か） |
+| `/stop` | HTTPサーバーを停止 |
+
+### 5. n8nワークフロー例：エラー時に自動再起動
+
+```
+[Execute Command (Gemini)]
+    ↓ エラー発生
+[IF: stderr contains "Target closed" or "Session closed"]
+    ↓ True
+[HTTP Request: restart-chrome]
+    ↓
+[Wait: 5秒]
+    ↓
+[Execute Command (Gemini) リトライ]
+```
+
+### 注意事項
+
+- HTTPサーバーはWindowsファイアウォールでポート8888を許可する必要がある場合があります
+- `host.docker.internal` はDocker Desktop for Windowsで使用できます
+- サーバーは `gemini-chrome-profile` を使用しているChromeのみを再起動します（通常のChromeには影響なし）
+
+---
+
 ## 重要な注意事項（備忘録）
 
 ### ポートプロキシは使わない
@@ -271,6 +360,7 @@ taskkill /F /IM chrome.exe
 
 ## 更新履歴
 
+- **2026-01-06**: Chrome再起動の自動化（n8n連携）セクション追加、HTTPサーバースクリプト追加
 - **2025-12-29**: Veo3セクションを別ファイル（veo3-shorts-manual.md）に分離
 - **2025-12-28**: ポートプロキシ競合問題の修正、備忘録セクション追加
 - **2024-12-27**: 初版作成
