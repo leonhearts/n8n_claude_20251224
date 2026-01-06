@@ -2,27 +2,38 @@
 # n8nからHTTPリクエストでChrome再起動をトリガーするサーバー
 #
 # 使い方:
-#   .\chrome-restart-server.ps1
+#   .\chrome-restart-server.ps1           # デフォルトポート8889
+#   .\chrome-restart-server.ps1 -Port 9000  # カスタムポート
 #
 # n8nから呼び出し:
-#   HTTP Request ノードで http://host.docker.internal:8888/restart-chrome にGETリクエスト
+#   HTTP Request ノードで http://host.docker.internal:8889/restart-chrome にGETリクエスト
 #
 # 管理者権限で実行する必要があります（最初の1回のみURLACL登録が必要）
 
 param(
-    [int]$Port = 8888
+    [int]$Port = 8889
 )
 
 $ChromePath = "C:\Program Files\Google\Chrome\Application\chrome.exe"
 $ChromeProfile = "C:\gemini-chrome-profile"
 $Prefix = "http://+:$Port/"
 
-# URLACLが登録されていなければ登録（管理者権限必要）
-$aclCheck = netsh http show urlacl url=$Prefix 2>&1
-if ($aclCheck -match "URL が見つかりません" -or $aclCheck -match "URL is not found") {
-    Write-Host "[INFO] Registering URL ACL (requires admin privileges)..."
-    netsh http add urlacl url=$Prefix user=Everyone
+# ポートが使用中か確認
+$portInUse = netstat -an | Select-String ":$Port\s+.*LISTENING"
+if ($portInUse) {
+    Write-Host "[ERROR] Port $Port is already in use. Try a different port:"
+    Write-Host "  .\chrome-restart-server.ps1 -Port 9000"
+    exit 1
 }
+
+# 既存のURLACL登録を削除して再登録
+$aclCheck = netsh http show urlacl url=$Prefix 2>&1
+if (-not ($aclCheck -match "URL が見つかりません" -or $aclCheck -match "URL is not found")) {
+    Write-Host "[INFO] Removing existing URL ACL for $Prefix..."
+    netsh http delete urlacl url=$Prefix 2>&1 | Out-Null
+}
+Write-Host "[INFO] Registering URL ACL (requires admin privileges)..."
+netsh http add urlacl url=$Prefix user=Everyone 2>&1 | Out-Null
 
 $listener = New-Object System.Net.HttpListener
 $listener.Prefixes.Add($Prefix)

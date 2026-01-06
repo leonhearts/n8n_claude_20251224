@@ -119,15 +119,20 @@ cd C:\script_all\n8n_claude_20251224\scripts
 ==========================================
  Chrome Restart Server Started
 ==========================================
- Listening on: http://+:8888/
+ Listening on: http://+:8889/
  Endpoints:
    GET /restart-chrome  - Restart Chrome
    GET /status          - Check Chrome status
    GET /stop            - Stop this server
 
  From n8n (Docker):
-   http://host.docker.internal:8888/restart-chrome
+   http://host.docker.internal:8889/restart-chrome
 ==========================================
+```
+
+**カスタムポートを使う場合：**
+```powershell
+.\chrome-restart-server.ps1 -Port 9000
 ```
 
 ### 2. Windowsスタートアップに登録（推奨）
@@ -146,7 +151,7 @@ cd C:\script_all\n8n_claude_20251224\scripts
 | 項目 | 値 |
 |------|-----|
 | Method | GET |
-| URL | `http://host.docker.internal:8888/restart-chrome` |
+| URL | `http://host.docker.internal:8889/restart-chrome` |
 
 **レスポンス例：**
 ```json
