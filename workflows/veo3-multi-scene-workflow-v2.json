@@ -144,7 +144,7 @@
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "search_url": "={{ $('Read Spreadsheet').item.json.search_url }}",
+            "search_url": "={{ $('Read Spreadsheet').first().json.search_url }}",
             "projectUrl": "={{ $json.projectUrl }}"
           },
           "matchingColumns": ["search_url"],
@@ -381,7 +381,7 @@
         "columns": {
           "mappingMode": "defineBelow",
           "value": {
-            "search_url": "={{ $('Read Spreadsheet').item.json.search_url }}",
+            "search_url": "={{ $('Read Spreadsheet').first().json.search_url }}",
             "status": "Completed",
             "drive_url": "={{ $json.driveUrl }}"
           },
