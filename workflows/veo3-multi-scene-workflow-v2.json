@@ -103,7 +103,7 @@
     },
     {
       "parameters": {
-        "command": "=node /home/node/veo3-shorts-simple.js '{{ JSON.stringify({ mode: \"image\", prompt: $('Extract Prompt Pairs').item.json.promptPairs[0].imagePrompt, outputPath: \"/tmp/veo3_scene.png\" }) }}'",
+        "command": "=cat > /tmp/veo3_config.json << 'EOF'\n{{ JSON.stringify({ mode: \"image\", prompt: $('Extract Prompt Pairs').first().json.promptPairs[0].imagePrompt, outputPath: \"/tmp/veo3_scene.png\" }) }}\nEOF\nnode /home/node/veo3-shorts-simple.js /tmp/veo3_config.json",
         "timeout": 300
       },
       "id": "d8900513-c7e7-42e7-8b45-7f573580c503",
@@ -115,7 +115,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse image generation result\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  // Find JSON in output (may have console.error messages before it)\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse image result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Image generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevData = $('Extract Prompt Pairs').item.json;\n\nreturn [{\n  json: {\n    projectUrl: result.projectUrl,\n    imagePath: result.outputPath,\n    promptPairs: prevData.promptPairs,\n    totalScenes: prevData.totalScenes,\n    rowNumber: prevData.rowNumber\n  }\n}];"
+        "jsCode": "// Parse image generation result\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  // Find JSON in output (may have console.error messages before it)\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse image result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Image generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevData = $('Extract Prompt Pairs').first().json;\n\nreturn [{\n  json: {\n    projectUrl: result.projectUrl,\n    imagePath: result.outputPath,\n    promptPairs: prevData.promptPairs,\n    totalScenes: prevData.totalScenes,\n    rowNumber: prevData.rowNumber\n  }\n}];"
       },
       "id": "5c00506a-755e-42ed-bb86-4704aeb68bff",
       "name": "Parse First Image Result",
@@ -167,7 +167,7 @@
     },
     {
       "parameters": {
-        "command": "=node /home/node/veo3-shorts-simple.js '{{ JSON.stringify({ mode: \"frame\", prompt: $('Parse First Image Result').item.json.promptPairs[0].videoPrompt, imagePath: \"/tmp/veo3_scene.png\", projectUrl: $('Parse First Image Result').item.json.projectUrl, download: $('Parse First Image Result').item.json.promptPairs[0].isLast, outputPath: \"/tmp/veo3_final.mp4\" }) }}'",
+        "command": "=cat > /tmp/veo3_config.json << 'EOF'\n{{ JSON.stringify({ mode: \"frame\", prompt: $('Parse First Image Result').first().json.promptPairs[0].videoPrompt, imagePath: \"/tmp/veo3_scene.png\", projectUrl: $('Parse First Image Result').first().json.projectUrl, download: $('Parse First Image Result').first().json.promptPairs[0].isLast, outputPath: \"/tmp/veo3_final.mp4\" }) }}\nEOF\nnode /home/node/veo3-shorts-simple.js /tmp/veo3_config.json",
         "timeout": 1800
       },
       "id": "a6e51fab-f427-4d56-b7cd-152e44a93c34",
@@ -179,7 +179,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse video result and prepare for loop or completion\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse video result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Video generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevData = $('Parse First Image Result').item.json;\nconst promptPairs = prevData.promptPairs;\n\n// If first scene was the only scene\nif (promptPairs[0].isLast) {\n  return [{\n    json: {\n      completed: true,\n      outputPath: result.outputPath,\n      projectUrl: result.projectUrl,\n      totalScenes: 1,\n      rowNumber: prevData.rowNumber\n    }\n  }];\n}\n\n// Prepare remaining scenes for loop\nconst remainingPairs = promptPairs.slice(1);\nreturn remainingPairs.map((pair, idx) => ({\n  json: {\n    completed: false,\n    imagePrompt: pair.imagePrompt,\n    videoPrompt: pair.videoPrompt,\n    isLast: pair.isLast,\n    sceneIndex: pair.index,\n    projectUrl: result.projectUrl,\n    rowNumber: prevData.rowNumber,\n    totalScenes: prevData.totalScenes\n  }\n}));"
+        "jsCode": "// Parse video result and prepare for loop or completion\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse video result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Video generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevData = $('Parse First Image Result').first().json;\nconst promptPairs = prevData.promptPairs;\n\n// If first scene was the only scene\nif (promptPairs[0].isLast) {\n  return [{\n    json: {\n      completed: true,\n      outputPath: result.outputPath,\n      projectUrl: result.projectUrl,\n      totalScenes: 1,\n      rowNumber: prevData.rowNumber\n    }\n  }];\n}\n\n// Prepare remaining scenes for loop\nconst remainingPairs = promptPairs.slice(1);\nreturn remainingPairs.map((pair, idx) => ({\n  json: {\n    completed: false,\n    imagePrompt: pair.imagePrompt,\n    videoPrompt: pair.videoPrompt,\n    isLast: pair.isLast,\n    sceneIndex: pair.index,\n    projectUrl: result.projectUrl,\n    rowNumber: prevData.rowNumber,\n    totalScenes: prevData.totalScenes\n  }\n}));"
       },
       "id": "a3864276-5688-4498-a283-765a52672f99",
       "name": "Prepare Loop",
@@ -230,7 +230,7 @@
     },
     {
       "parameters": {
-        "command": "=node /home/node/veo3-shorts-simple.js '{{ JSON.stringify({ mode: \"image\", prompt: $json.imagePrompt, outputPath: \"/tmp/veo3_scene.png\", projectUrl: $json.projectUrl }) }}'",
+        "command": "=cat > /tmp/veo3_config.json << 'EOF'\n{{ JSON.stringify({ mode: \"image\", prompt: $json.imagePrompt, outputPath: \"/tmp/veo3_scene.png\", projectUrl: $json.projectUrl }) }}\nEOF\nnode /home/node/veo3-shorts-simple.js /tmp/veo3_config.json",
         "timeout": 300
       },
       "id": "75c43df4-ebb5-4a6b-8486-d6f3e0c57c90",
@@ -242,7 +242,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse loop image result\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse image result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Image generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevItem = $('Loop Over Items').item.json;\n\nreturn [{\n  json: {\n    videoPrompt: prevItem.videoPrompt,\n    isLast: prevItem.isLast,\n    sceneIndex: prevItem.sceneIndex,\n    projectUrl: result.projectUrl,\n    rowNumber: prevItem.rowNumber,\n    totalScenes: prevItem.totalScenes\n  }\n}];"
+        "jsCode": "// Parse loop image result\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse image result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Image generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevItem = $('Loop Over Items').first().json;\n\nreturn [{\n  json: {\n    videoPrompt: prevItem.videoPrompt,\n    isLast: prevItem.isLast,\n    sceneIndex: prevItem.sceneIndex,\n    projectUrl: result.projectUrl,\n    rowNumber: prevItem.rowNumber,\n    totalScenes: prevItem.totalScenes\n  }\n}];"
       },
       "id": "33e9bade-7752-4bc0-a116-9aa64eea15f7",
       "name": "Parse Image (Loop)",
@@ -252,7 +252,7 @@
     },
     {
       "parameters": {
-        "command": "=node /home/node/veo3-shorts-simple.js '{{ JSON.stringify({ mode: \"frame\", prompt: $json.videoPrompt, imagePath: \"/tmp/veo3_scene.png\", projectUrl: $json.projectUrl, download: $json.isLast, outputPath: \"/tmp/veo3_final.mp4\" }) }}'",
+        "command": "=cat > /tmp/veo3_config.json << 'EOF'\n{{ JSON.stringify({ mode: \"frame\", prompt: $json.videoPrompt, imagePath: \"/tmp/veo3_scene.png\", projectUrl: $json.projectUrl, download: $json.isLast, outputPath: \"/tmp/veo3_final.mp4\" }) }}\nEOF\nnode /home/node/veo3-shorts-simple.js /tmp/veo3_config.json",
         "timeout": 1800
       },
       "id": "5bde26b3-0e3b-421c-97f2-c9702e380f42",
@@ -264,7 +264,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse loop video result and check if done\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse video result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Video generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevItem = $('Parse Image (Loop)').item.json;\n\n// If this was the last scene, go to upload\nif (prevItem.isLast) {\n  return [{\n    json: {\n      completed: true,\n      outputPath: result.outputPath,\n      projectUrl: result.projectUrl,\n      sceneIndex: prevItem.sceneIndex,\n      rowNumber: prevItem.rowNumber,\n      totalScenes: prevItem.totalScenes\n    }\n  }];\n}\n\n// Not the last scene - continue loop\nreturn [{\n  json: {\n    completed: false,\n    projectUrl: result.projectUrl,\n    sceneIndex: prevItem.sceneIndex,\n    rowNumber: prevItem.rowNumber,\n    totalScenes: prevItem.totalScenes\n  }\n}];"
+        "jsCode": "// Parse loop video result and check if done\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse video result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Video generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevItem = $('Parse Image (Loop)').first().json;\n\n// If this was the last scene, go to upload\nif (prevItem.isLast) {\n  return [{\n    json: {\n      completed: true,\n      outputPath: result.outputPath,\n      projectUrl: result.projectUrl,\n      sceneIndex: prevItem.sceneIndex,\n      rowNumber: prevItem.rowNumber,\n      totalScenes: prevItem.totalScenes\n    }\n  }];\n}\n\n// Not the last scene - continue loop\nreturn [{\n  json: {\n    completed: false,\n    projectUrl: result.projectUrl,\n    sceneIndex: prevItem.sceneIndex,\n    rowNumber: prevItem.rowNumber,\n    totalScenes: prevItem.totalScenes\n  }\n}];"
       },
       "id": "3b1ef617-87f2-4b53-a041-e77a2431127d",
       "name": "Parse Video (Loop)",
@@ -353,7 +353,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Get Drive URL from upload result\nconst fileId = $input.first().json.id;\nconst driveUrl = 'https://drive.google.com/file/d/' + fileId + '/view';\n\n// Get previous data\nconst prevData = $('Read Video File').item.json;\n\nreturn [{\n  json: {\n    driveUrl: driveUrl,\n    fileId: fileId,\n    rowNumber: prevData.rowNumber,\n    totalScenes: prevData.totalScenes,\n    projectUrl: prevData.projectUrl\n  }\n}];"
+        "jsCode": "// Get Drive URL from upload result\nconst fileId = $input.first().json.id;\nconst driveUrl = 'https://drive.google.com/file/d/' + fileId + '/view';\n\n// Get previous data\nconst prevData = $('Read Video File').first().json;\n\nreturn [{\n  json: {\n    driveUrl: driveUrl,\n    fileId: fileId,\n    rowNumber: prevData.rowNumber,\n    totalScenes: prevData.totalScenes,\n    projectUrl: prevData.projectUrl\n  }\n}];"
       },
       "id": "a4a8beff-2018-407d-8e63-5b668747e78c",
       "name": "Get Drive URL",
