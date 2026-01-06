@@ -43,6 +43,9 @@ const DEFAULT_CONFIG = {
   download: true,  // true: 動画をダウンロード、false: ダウンロードせずプロジェクトURLのみ返す
   // 音声制御
   keepAudio: true,  // true: 音声を保持、false: 音声を削除
+  // リトライ設定
+  maxRetries: 3,  // 生成失敗時の最大リトライ回数
+  retryDelay: 10000,  // リトライ間の待機時間（ミリ秒）
 };
 
 // セレクタ
@@ -805,11 +808,9 @@ async function downloadGeneratedImage(page, config) {
 }
 
 /**
- * 単一の動画を生成
+ * 動画生成の内部処理（リトライなし）
  */
-async function generateVideo(page, config, index) {
-  console.error(`\n=== Generating Video ${index} ===`);
-
+async function generateVideoInternal(page, config, index) {
   // フレームから動画モードの場合
   if (config.mode === 'frame' && config.imagePath) {
     await selectFrameToVideoMode(page, config.imagePath);
@@ -853,7 +854,7 @@ async function generateVideo(page, config, index) {
     const pageText = await page.evaluate(() => document.body.innerText);
     if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
       console.error('Generation error detected on page');
-      throw new Error('Video generation failed: 生成できませんでした');
+      throw new Error('RETRY:Video generation failed: 生成できませんでした');
     }
 
     // 「シーンに追加」ボタンが表示されたら動画生成完了
@@ -891,21 +892,63 @@ async function generateVideo(page, config, index) {
           console.error(`  Waiting for add clip button... ${i * 2}s`);
         }
       }
-      break;
+      return { success: true, time: Math.round((Date.now() - startTime) / 1000) };
     }
   }
 
-  return {
-    time: Math.round((Date.now() - startTime) / 1000)
-  };
+  return { success: true, time: Math.round((Date.now() - startTime) / 1000) };
 }
 
 /**
- * シーン拡張（2個目以降の動画生成）
+ * 単一の動画を生成（リトライ機能付き）
  */
-async function extendScene(page, config, index) {
-  console.error(`\n=== Extending Scene ${index} ===`);
+async function generateVideo(page, config, index) {
+  console.error(`\n=== Generating Video ${index} ===`);
 
+  const maxRetries = config.maxRetries || 3;
+  const retryDelay = config.retryDelay || 10000;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 1) {
+        console.error(`\n=== Retry attempt ${attempt}/${maxRetries} for Video ${index} ===`);
+        // ページをリロードしてプロジェクトに戻る
+        const projectUrl = config.projectUrl || page.url();
+        console.error('Reloading project page: ' + projectUrl);
+        await page.goto(projectUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(5000);
+        await dismissNotifications(page);
+        await dismissConsentPopup(page);
+      }
+
+      const result = await generateVideoInternal(page, config, index);
+      return result;
+
+    } catch (e) {
+      lastError = e;
+      const isRetryable = e.message.includes('RETRY:') ||
+                          e.message.includes('生成できませんでした') ||
+                          e.message.includes('Could not generate');
+
+      if (isRetryable && attempt < maxRetries) {
+        console.error(`Generation failed (attempt ${attempt}/${maxRetries}): ${e.message}`);
+        console.error(`Waiting ${retryDelay / 1000}s before retry...`);
+        await page.waitForTimeout(retryDelay);
+      } else {
+        // 最終試行またはリトライ不可エラー
+        throw new Error(e.message.replace('RETRY:', ''));
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+/**
+ * シーン拡張の内部処理（リトライなし）
+ */
+async function extendSceneInternal(page, config, index) {
   // プラスボタンが有効になるまで待機
   await dismissNotifications(page);
   console.error('Waiting for add clip button to be enabled...');
@@ -987,6 +1030,13 @@ async function extendScene(page, config, index) {
 
     await dismissNotifications(page);
 
+    // エラーメッセージをチェック
+    const pageText = await page.evaluate(() => document.body.innerText);
+    if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
+      console.error('Generation error detected on page');
+      throw new Error('RETRY:Scene extension failed: 生成できませんでした');
+    }
+
     // 拡張完了の判定：プラスボタンが再度表示される
     const addBtnAgain = await page.$(SELECTORS.addClipButton);
     if (addBtnAgain && await addBtnAgain.isVisible()) {
@@ -998,9 +1048,62 @@ async function extendScene(page, config, index) {
 
   if (!completed) throw new Error(`Scene ${index} extension timeout`);
 
-  return {
-    time: Math.round((Date.now() - startTime) / 1000)
-  };
+  return { success: true, time: Math.round((Date.now() - startTime) / 1000) };
+}
+
+/**
+ * シーン拡張（2個目以降の動画生成）- リトライ機能付き
+ */
+async function extendScene(page, config, index) {
+  console.error(`\n=== Extending Scene ${index} ===`);
+
+  const maxRetries = config.maxRetries || 3;
+  const retryDelay = config.retryDelay || 10000;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 1) {
+        console.error(`\n=== Retry attempt ${attempt}/${maxRetries} for Scene ${index} ===`);
+        // シーンビルダーに戻る
+        const projectUrl = config.projectUrl || page.url();
+        // /scenes/ URLの場合はベースプロジェクトURLを使用
+        const baseProjectUrl = projectUrl.replace(/\/scenes\/.*$/, '');
+        console.error('Reloading project page: ' + baseProjectUrl);
+        await page.goto(baseProjectUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+        await page.waitForTimeout(5000);
+        await dismissNotifications(page);
+        await dismissConsentPopup(page);
+
+        // シーンビルダータブに移動
+        const scenebuilderBtn = await page.$(SELECTORS.scenebuilderTab);
+        if (scenebuilderBtn && await scenebuilderBtn.isVisible()) {
+          await scenebuilderBtn.click();
+          console.error('Clicked Scenebuilder tab');
+          await page.waitForTimeout(3000);
+        }
+      }
+
+      const result = await extendSceneInternal(page, config, index);
+      return result;
+
+    } catch (e) {
+      lastError = e;
+      const isRetryable = e.message.includes('RETRY:') ||
+                          e.message.includes('生成できませんでした') ||
+                          e.message.includes('Could not generate');
+
+      if (isRetryable && attempt < maxRetries) {
+        console.error(`Extension failed (attempt ${attempt}/${maxRetries}): ${e.message}`);
+        console.error(`Waiting ${retryDelay / 1000}s before retry...`);
+        await page.waitForTimeout(retryDelay);
+      } else {
+        throw new Error(e.message.replace('RETRY:', ''));
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 /**
