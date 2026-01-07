@@ -1,0 +1,144 @@
+{
+  "name": "Veo3 Character Video Generation",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "generate-character-video",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "character-video-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "// スプレッドシートデータから設定を構築\nconst body = $input.first().json.body;\n\n// image_prompt1~24 から最初の非空プロンプトを取得\nlet imagePrompt = '';\nfor (let i = 1; i <= 24; i++) {\n  const key = `image_prompt${i}`;\n  if (body[key] && body[key].trim()) {\n    imagePrompt = body[key].trim();\n    break;\n  }\n}\n\n// video_prompt1~24 から非空プロンプトを配列として取得\nconst videoPrompts = [];\nfor (let i = 1; i <= 24; i++) {\n  const key = `video_prompt${i}`;\n  if (body[key] && body[key].trim()) {\n    videoPrompts.push(body[key].trim());\n  }\n}\n\n// スタイルが指定されている場合はプロンプトに追加\nconst style = body.style ? body.style.trim() : '';\nif (style && imagePrompt) {\n  imagePrompt = `${style}. ${imagePrompt}`;\n}\nif (style && videoPrompts.length > 0) {\n  for (let i = 0; i < videoPrompts.length; i++) {\n    videoPrompts[i] = `${style}. ${videoPrompts[i]}`;\n  }\n}\n\n// 設定を構築\nconst config = {\n  imagePrompt: imagePrompt,\n  videoPrompts: videoPrompts,\n  outputPath: body.outputPath || '/tmp/veo3_character_output.mp4',\n  movieTime: parseInt(body.movie_time) || 15,\n  aspectRatio: body.aspectRatio || 'portrait',\n  download: body.download !== false,\n  keepAudio: body.keepAudio !== false,\n  projectUrl: body.projectUrl || null,\n  // メタデータ\n  searchUrl: body.search_url || '',\n  searchKeyword: body.search_keyword || ''\n};\n\nif (!config.imagePrompt) {\n  throw new Error('No image prompt found (image_prompt1~24)');\n}\n\nif (config.videoPrompts.length === 0) {\n  throw new Error('No video prompts found (video_prompt1~24)');\n}\n\nconsole.log('Config:', JSON.stringify(config, null, 2));\n\nreturn [{ json: config }];"
+      },
+      "id": "prepare-config",
+      "name": "Prepare Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [500, 300]
+    },
+    {
+      "parameters": {
+        "command": "=node /home/node/veo3-character-video.js '{{ JSON.stringify($json) }}'",
+        "options": {
+          "timeout": 3600000
+        }
+      },
+      "id": "execute-script",
+      "name": "Generate Character Video",
+      "type": "n8n-nodes-base.executeCommand",
+      "typeVersion": 1,
+      "position": [750, 300],
+      "retryOnFail": true,
+      "waitBetweenTries": 30000,
+      "maxTries": 2
+    },
+    {
+      "parameters": {
+        "jsCode": "// スクリプトの出力をパース\nconst output = $input.first().json.stdout;\n\ntry {\n  const result = JSON.parse(output);\n  if (result.success) {\n    return [{ json: result }];\n  } else {\n    throw new Error(result.error || 'Video generation failed');\n  }\n} catch (e) {\n  // エラー時は詳細情報を返す\n  const stderr = $input.first().json.stderr || '';\n  return [{ json: { \n    error: e.message, \n    raw: output,\n    stderr: stderr.substring(0, 500)\n  }}];\n}"
+      },
+      "id": "parse-result",
+      "name": "Parse Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1000, 300]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1250, 300]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Config": {
+      "main": [
+        [
+          {
+            "node": "Generate Character Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Character Video": {
+      "main": [
+        [
+          {
+            "node": "Parse Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Result": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionTimeout": 3900,
+    "saveManualExecutions": true
+  },
+  "tags": [],
+  "pinData": {},
+  "_comment": {
+    "description": "キャラクター動画生成ワークフロー",
+    "usage": "POST /generate-character-video with JSON body",
+    "required_fields": [
+      "image_prompt1 (またはimage_prompt2~24のいずれか)",
+      "video_prompt1 (および任意でvideo_prompt2~24)"
+    ],
+    "optional_fields": [
+      "style - スタイル指定（空の場合は元動画参照）",
+      "movie_time - 目標動画時間（秒）",
+      "search_url - 検索URL（メタデータ）",
+      "search_keyword - 検索キーワード（メタデータ）",
+      "outputPath - 出力パス",
+      "aspectRatio - portrait/landscape",
+      "download - ダウンロードするか（default: true）",
+      "keepAudio - 音声を保持するか（default: true）",
+      "projectUrl - 既存プロジェクトURL"
+    ],
+    "example_request": {
+      "image_prompt1": "A cute anime character with blue hair",
+      "video_prompt1": "The character waves hello",
+      "video_prompt2": "The character smiles and winks",
+      "style": "anime style, colorful",
+      "movie_time": 15
+    }
+  }
+}
