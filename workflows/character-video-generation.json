@@ -3,82 +3,399 @@
   "nodes": [
     {
       "parameters": {
-        "httpMethod": "POST",
-        "path": "generate-character-video",
-        "responseMode": "responseNode",
-        "options": {}
-      },
-      "id": "webhook-trigger",
-      "name": "Webhook",
-      "type": "n8n-nodes-base.webhook",
-      "typeVersion": 2,
-      "position": [250, 300],
-      "webhookId": "character-video-webhook"
-    },
-    {
-      "parameters": {
-        "jsCode": "// スプレッドシートデータから設定を構築\nconst body = $input.first().json.body;\n\n// image_prompt1~24 から最初の非空プロンプトを取得\nlet imagePrompt = '';\nfor (let i = 1; i <= 24; i++) {\n  const key = `image_prompt${i}`;\n  if (body[key] && body[key].trim()) {\n    imagePrompt = body[key].trim();\n    break;\n  }\n}\n\n// video_prompt1~24 から非空プロンプトを配列として取得\nconst videoPrompts = [];\nfor (let i = 1; i <= 24; i++) {\n  const key = `video_prompt${i}`;\n  if (body[key] && body[key].trim()) {\n    videoPrompts.push(body[key].trim());\n  }\n}\n\n// スタイルが指定されている場合はプロンプトに追加\nconst style = body.style ? body.style.trim() : '';\nif (style && imagePrompt) {\n  imagePrompt = `${style}. ${imagePrompt}`;\n}\nif (style && videoPrompts.length > 0) {\n  for (let i = 0; i < videoPrompts.length; i++) {\n    videoPrompts[i] = `${style}. ${videoPrompts[i]}`;\n  }\n}\n\n// 設定を構築\nconst config = {\n  imagePrompt: imagePrompt,\n  videoPrompts: videoPrompts,\n  outputPath: body.outputPath || '/tmp/veo3_character_output.mp4',\n  movieTime: parseInt(body.movie_time) || 15,\n  aspectRatio: body.aspectRatio || 'portrait',\n  download: body.download !== false,\n  keepAudio: body.keepAudio !== false,\n  projectUrl: body.projectUrl || null,\n  // メタデータ\n  searchUrl: body.search_url || '',\n  searchKeyword: body.search_keyword || ''\n};\n\nif (!config.imagePrompt) {\n  throw new Error('No image prompt found (image_prompt1~24)');\n}\n\nif (config.videoPrompts.length === 0) {\n  throw new Error('No video prompts found (video_prompt1~24)');\n}\n\nconsole.log('Config:', JSON.stringify(config, null, 2));\n\nreturn [{ json: config }];"
-      },
-      "id": "prepare-config",
-      "name": "Prepare Config",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [500, 300]
-    },
-    {
-      "parameters": {
-        "command": "=node /home/node/veo3-character-video.js '{{ JSON.stringify($json) }}'",
-        "options": {
-          "timeout": 3600000
+        "rule": {
+          "interval": [
+            {}
+          ]
         }
       },
-      "id": "execute-script",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [816, 160],
+      "id": "schedule-trigger",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ",
+          "mode": "list",
+          "cachedResultName": "廃墟チャンネルマスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "シート1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "Plan"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "read-spreadsheet",
+      "name": "Read Spreadsheet Plan",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1056, 176],
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// スプレッドシートデータからキャラクター動画用の設定を構築\nconst row = $input.first().json;\n\n// image_prompt1 のみをベース画像として使用\nconst imagePrompt = row.image_prompt1 ? row.image_prompt1.trim() : '';\n\n// video_prompt1~24 から非空プロンプトを配列として取得\nconst videoPrompts = [];\nfor (let i = 1; i <= 24; i++) {\n  const key = 'video_prompt' + i;\n  if (row[key] && row[key].trim()) {\n    videoPrompts.push(row[key].trim());\n  }\n}\n\nif (!imagePrompt) {\n  throw new Error('image_prompt1 is required for character video');\n}\n\nif (videoPrompts.length === 0) {\n  throw new Error('At least one video_prompt is required');\n}\n\n// スタイルが指定されている場合はプロンプトに追加\nconst style = row.style ? row.style.trim() : '';\nlet finalImagePrompt = imagePrompt;\nlet finalVideoPrompts = [...videoPrompts];\n\nif (style) {\n  finalImagePrompt = style + '. ' + imagePrompt;\n  finalVideoPrompts = videoPrompts.map(p => style + '. ' + p);\n}\n\nreturn [{\n  json: {\n    imagePrompt: finalImagePrompt,\n    videoPrompts: finalVideoPrompts,\n    totalScenes: videoPrompts.length,\n    searchUrl: row.search_url || '',\n    searchKeyword: row.search_keyword || '',\n    originalRow: row\n  }\n}];"
+      },
+      "id": "extract-prompts",
+      "name": "Extract Video Prompts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1280, 176]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ",
+          "mode": "list",
+          "cachedResultName": "廃墟チャンネルマスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "シート1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "search_url": "={{ $json.searchUrl }}",
+            "status": "Processing"
+          },
+          "matchingColumns": ["search_url"],
+          "schema": [
+            {"id": "search_url", "displayName": "search_url", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "status", "displayName": "status", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true}
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "update-status-processing",
+      "name": "Update Status Processing",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [1504, 176],
+      "executeOnce": true,
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "command": "=cat > /tmp/veo3_character_config.json << 'EOF'\n{{ JSON.stringify({ imagePrompt: $('Extract Video Prompts').first().json.imagePrompt, videoPrompts: $('Extract Video Prompts').first().json.videoPrompts, outputPath: \"/tmp/veo3_character_final.mp4\", aspectRatio: \"portrait\", download: true, keepAudio: true }) }}\nEOF\nnode /home/node/veo3-character-video.js /tmp/veo3_character_config.json"
+      },
+      "id": "generate-character-video",
       "name": "Generate Character Video",
       "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
-      "position": [750, 300],
-      "retryOnFail": true,
-      "waitBetweenTries": 30000,
-      "maxTries": 2
+      "position": [1728, 176],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "jsCode": "// スクリプトの出力をパース\nconst output = $input.first().json.stdout;\n\ntry {\n  const result = JSON.parse(output);\n  if (result.success) {\n    return [{ json: result }];\n  } else {\n    throw new Error(result.error || 'Video generation failed');\n  }\n} catch (e) {\n  // エラー時は詳細情報を返す\n  const stderr = $input.first().json.stderr || '';\n  return [{ json: { \n    error: e.message, \n    raw: output,\n    stderr: stderr.substring(0, 500)\n  }}];\n}"
+        "jsCode": "// スクリプト結果をパース\nconst output = $input.first().json.stdout;\nlet result;\n\ntry {\n  // JSON出力を探す\n  const jsonMatch = output.match(/\\{[^{}]*\"success\"[^{}]*\\}/);\n  if (jsonMatch) {\n    result = JSON.parse(jsonMatch[0]);\n  } else {\n    result = JSON.parse(output);\n  }\n} catch (e) {\n  throw new Error('Failed to parse result: ' + output);\n}\n\nif (!result.success) {\n  throw new Error('Character video generation failed: ' + (result.error || 'Unknown error'));\n}\n\nconst prevData = $('Extract Video Prompts').first().json;\n\nreturn [{\n  json: {\n    outputPath: result.outputPath,\n    projectUrl: result.projectUrl,\n    sceneCount: result.sceneCount,\n    totalTime: result.totalTime,\n    searchUrl: prevData.searchUrl,\n    searchKeyword: prevData.searchKeyword\n  }\n}];"
       },
       "id": "parse-result",
       "name": "Parse Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [1000, 300]
+      "position": [1952, 176],
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ",
+          "mode": "list",
+          "cachedResultName": "廃墟チャンネルマスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "シート1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "search_url": "={{ $json.searchUrl }}",
+            "projectUrl": "={{ $json.projectUrl }}"
+          },
+          "matchingColumns": ["search_url"],
+          "schema": [
+            {"id": "search_url", "displayName": "search_url", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "projectUrl", "displayName": "projectUrl", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true}
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
         "options": {}
       },
-      "id": "respond-webhook",
-      "name": "Respond to Webhook",
-      "type": "n8n-nodes-base.respondToWebhook",
+      "id": "write-project-url",
+      "name": "Write ProjectURL",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [2176, 176],
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ファイル読み込み準備\nconst prevData = $input.first().json;\n\nreturn [{\n  json: {\n    filePath: '/tmp/veo3_character_final.mp4',\n    projectUrl: prevData.projectUrl,\n    sceneCount: prevData.sceneCount,\n    searchUrl: prevData.searchUrl\n  }\n}];"
+      },
+      "id": "prepare-file-read",
+      "name": "Prepare File Read",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2400, 176]
+    },
+    {
+      "parameters": {
+        "fileSelector": "={{ $json.filePath }}",
+        "options": {
+          "dataPropertyName": "data"
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
-      "position": [1250, 300]
+      "position": [2624, 176],
+      "id": "read-binary-file",
+      "name": "Read Binary File"
+    },
+    {
+      "parameters": {
+        "name": "=veo3_character_{{ $now.format('yyyyMMdd_HHmmss') }}.mp4",
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "value": "https://drive.google.com/drive/folders/1lpyK2P7_mbMzQ74IkA2f4leDnuHs7CO_",
+          "mode": "url"
+        },
+        "options": {}
+      },
+      "id": "upload-to-drive",
+      "name": "Upload to Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [2848, 176],
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "SxFWwEDsUgCoW69A",
+          "name": "Google Drive tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Drive URLを取得\nconst fileId = $input.first().json.id;\nconst driveUrl = 'https://drive.google.com/file/d/' + fileId + '/view';\n\nconst prevData = $('Prepare File Read').first().json;\n\nreturn [{\n  json: {\n    driveUrl: driveUrl,\n    fileId: fileId,\n    projectUrl: prevData.projectUrl,\n    sceneCount: prevData.sceneCount,\n    searchUrl: prevData.searchUrl\n  }\n}];"
+      },
+      "id": "get-drive-url",
+      "name": "Get Drive URL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3072, 176]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ",
+          "mode": "list",
+          "cachedResultName": "廃墟チャンネルマスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "シート1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1pZGOCV8wG6HTSZLUpF3TOPhE4vUEBoFmeA2leVHi2rQ/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "search_url": "={{ $json.searchUrl }}",
+            "status": "Completed",
+            "drive_url": "={{ $json.driveUrl }}"
+          },
+          "matchingColumns": ["search_url"],
+          "schema": [
+            {"id": "search_url", "displayName": "search_url", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "status", "displayName": "status", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true},
+            {"id": "drive_url", "displayName": "drive_url", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true}
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "update-status-completed",
+      "name": "Update Status Completed",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [3296, 176],
+      "alwaysOutputData": true,
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "=Veo3 Character Video Complete\n\nScenes: {{ $json.sceneCount || 'N/A' }}\nSearch URL: {{ $json.searchUrl }}\nDrive: {{ $json.driveUrl }}",
+        "options": {}
+      },
+      "id": "discord-success",
+      "name": "Discord Success",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [3520, 176],
+      "webhookId": "3de4a46f-b3c7-4d1c-9e38-353ed6af33c7",
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "rt0K8qLyVG6wH6wB",
+          "name": "Discord Webhook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// エラーハンドリング\nconst errorData = $input.first().json;\n\nreturn [{\n  json: {\n    errorNode: errorData.$nodeType || 'Unknown',\n    errorMessage: errorData.error?.message || errorData.stderr || 'Execution failed'\n  }\n}];"
+      },
+      "id": "format-error",
+      "name": "Format Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2176, 400]
+    },
+    {
+      "parameters": {
+        "authentication": "webhook",
+        "content": "=Veo3 Character Video Error\n\nNode: {{ $json.errorNode || 'Unknown' }}\nError: {{ $json.errorMessage || 'Unknown error' }}",
+        "options": {}
+      },
+      "id": "discord-error",
+      "name": "Discord Error",
+      "type": "n8n-nodes-base.discord",
+      "typeVersion": 2,
+      "position": [2400, 400],
+      "webhookId": "93d4b9fc-c53d-4be5-92a1-0dd2d1b18f9a",
+      "credentials": {
+        "discordWebhookApi": {
+          "id": "rt0K8qLyVG6wH6wB",
+          "name": "Discord Webhook account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## キャラクター動画生成\n\n1. image_prompt1 でベース画像生成\n2. Add To Prompt で画像をプロンプトに追加\n3. video_prompt1~N で動画生成・シーン拡張\n4. 最終動画をダウンロード・Drive アップロード",
+        "height": 500,
+        "width": 2900
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [780, -48],
+      "id": "sticky-note",
+      "name": "Sticky Note"
     }
   ],
   "connections": {
-    "Webhook": {
+    "Schedule Trigger": {
       "main": [
         [
           {
-            "node": "Prepare Config",
+            "node": "Read Spreadsheet Plan",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Prepare Config": {
+    "Read Spreadsheet Plan": {
+      "main": [
+        [
+          {
+            "node": "Extract Video Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Video Prompts": {
+      "main": [
+        [
+          {
+            "node": "Update Status Processing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status Processing": {
       "main": [
         [
           {
             "node": "Generate Character Video",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Error",
             "type": "main",
             "index": 0
           }
@@ -93,6 +410,13 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Format Error",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     },
@@ -100,7 +424,91 @@
       "main": [
         [
           {
-            "node": "Respond to Webhook",
+            "node": "Write ProjectURL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Format Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write ProjectURL": {
+      "main": [
+        [
+          {
+            "node": "Prepare File Read",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare File Read": {
+      "main": [
+        [
+          {
+            "node": "Read Binary File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Binary File": {
+      "main": [
+        [
+          {
+            "node": "Upload to Drive",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to Drive": {
+      "main": [
+        [
+          {
+            "node": "Get Drive URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Drive URL": {
+      "main": [
+        [
+          {
+            "node": "Update Status Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Status Completed": {
+      "main": [
+        [
+          {
+            "node": "Discord Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Error": {
+      "main": [
+        [
+          {
+            "node": "Discord Error",
             "type": "main",
             "index": 0
           }
@@ -108,37 +516,13 @@
       ]
     }
   },
+  "pinData": {},
   "active": false,
   "settings": {
     "executionTimeout": 3900,
     "saveManualExecutions": true
   },
-  "tags": [],
-  "pinData": {},
-  "_comment": {
-    "description": "キャラクター動画生成ワークフロー",
-    "usage": "POST /generate-character-video with JSON body",
-    "required_fields": [
-      "image_prompt1 (またはimage_prompt2~24のいずれか)",
-      "video_prompt1 (および任意でvideo_prompt2~24)"
-    ],
-    "optional_fields": [
-      "style - スタイル指定（空の場合は元動画参照）",
-      "movie_time - 目標動画時間（秒）",
-      "search_url - 検索URL（メタデータ）",
-      "search_keyword - 検索キーワード（メタデータ）",
-      "outputPath - 出力パス",
-      "aspectRatio - portrait/landscape",
-      "download - ダウンロードするか（default: true）",
-      "keepAudio - 音声を保持するか（default: true）",
-      "projectUrl - 既存プロジェクトURL"
-    ],
-    "example_request": {
-      "image_prompt1": "A cute anime character with blue hair",
-      "video_prompt1": "The character waves hello",
-      "video_prompt2": "The character smiles and winks",
-      "style": "anime style, colorful",
-      "movie_time": 15
-    }
+  "meta": {
+    "instanceId": "15c4c69b68a0d89ae26ebe1197eee8426ac5148f2255f927259d610172b7cbb4"
   }
 }
