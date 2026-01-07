@@ -1,0 +1,887 @@
+{
+  "name": "NOTE ブログ自動投稿（ヘッダー画像対応・修正版）",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "id": "1aeb9be6-0c88-4849-b611-122e6f82711e",
+      "name": "Schedule Trigger4",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        96,
+        848
+      ],
+      "typeVersion": 1.2
+    },
+    {
+      "parameters": {
+        "command": "cat > /home/node/scripts/gemini-auto.js <<'SCRIPT_EOF'\nconst { chromium } = require('playwright');\nconst fs = require('fs');\n\nfunction deepFindPrompts(x, depth = 0) {\n  if (depth > 8 || x == null) return null;\n\n  // prompts 配列そのもの\n  if (Array.isArray(x)) {\n    // 「配列そのものが prompts」の場合（要素が {text:...} を持つ）\n    if (x.length > 0 && typeof x[0] === 'object' && x[0] && ('text' in x[0])) return x;\n\n    // 配列の各要素を深掘り\n    for (const v of x) {\n      const found = deepFindPrompts(v, depth + 1);\n      if (found) return found;\n    }\n    return null;\n  }\n\n  if (typeof x === 'object') {\n    // よくあるキー\n    if (Array.isArray(x.prompts)) return x.prompts;\n    if (x.json && Array.isArray(x.json.prompts)) return x.json.prompts;\n    if (x.data && Array.isArray(x.data.prompts)) return x.data.prompts;\n    if (x.item && x.item.json && Array.isArray(x.item.json.prompts)) return x.item.json.prompts;\n    if (x.items && Array.isArray(x.items)) {\n      const found = deepFindPrompts(x.items, depth + 1);\n      if (found) return found;\n    }\n\n    // 全キー総当り探索（Convert to File の \"items配列\" 形式など全部吸収）\n    for (const k of Object.keys(x)) {\n      const found = deepFindPrompts(x[k], depth + 1);\n      if (found) return found;\n    }\n  }\n\n  return null;\n}\n\nfunction loadPromptsFromArgs() {\n  const argv = process.argv.slice(2);\n  const flags = new Set(argv.filter(a => a.startsWith('--')));\n  const inputArg = argv.find(a => !a.startsWith('--'));\n\n  if (!inputArg) return { error: 'No input provided' };\n\n  let jsonText = inputArg;\n\n  try {\n    if (flags.has('--file')) {\n      if (!fs.existsSync(inputArg)) return { error: 'Input file not found', filePath: inputArg };\n      jsonText = fs.readFileSync(inputArg, 'utf8');\n    }\n\n    if (flags.has('--base64')) {\n      jsonText = Buffer.from(jsonText, 'base64').toString('utf8');\n    }\n\n    const parsed = JSON.parse(jsonText);\n    const prompts = deepFindPrompts(parsed);\n\n    if (!Array.isArray(prompts)) {\n      return { error: 'Prompts not found in input' };\n    }\n\n    return { prompts };\n  } catch (e) {\n    return { error: 'Invalid JSON', message: e.message };\n  }\n}\n\nasync function run() {\n  console.error('[gemini-auto] start');\n\n  const cookiePath = '/home/node/scripts/gemini-cookies.json';\n  const userDataDir = '/home/node/scripts/gemini-browser-profile';\n\n  if (!fs.existsSync(cookiePath)) {\n    process.stdout.write(JSON.stringify({ error: 'Cookie file not found', cookiePath }) + '\\n');\n    process.exit(1);\n  }\n\n  const input = loadPromptsFromArgs();\n  if (input.error) {\n    process.stdout.write(JSON.stringify(input) + '\\n');\n    process.exit(1);\n  }\n\n  const prompts = input.prompts;\n  console.error('[gemini-auto] prompts:', prompts.length);\n\n  if (!fs.existsSync(userDataDir)) fs.mkdirSync(userDataDir, { recursive: true });\n\n  const cookies = JSON.parse(fs.readFileSync(cookiePath, 'utf8'));\n  console.error('[gemini-auto] cookies:', cookies.length);\n\n  const context = await chromium.launchPersistentContext(userDataDir, {\n    headless: true,\n    args: [\n      '--no-sandbox',\n      '--disable-setuid-sandbox',\n      '--disable-dev-shm-usage',\n      '--disable-gpu',\n      '--disable-blink-features=AutomationControlled',\n    ],\n    ignoreDefaultArgs: ['--enable-automation'],\n  });\n\n  await context.addCookies(cookies);\n\n  const page = context.pages()[0] || await context.newPage();\n\n  console.error('[gemini-auto] goto');\n  await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 60000 });\n  await page.waitForTimeout(5000);\n\n  const url = page.url();\n  console.error('[gemini-auto] url:', url);\n\n  const loggedIn = !url.includes('accounts.google.com') && !url.includes('signin');\n  console.error('[gemini-auto] loggedIn:', loggedIn);\n\n  if (!loggedIn) {\n    await context.close();\n    process.stdout.write(JSON.stringify({ error: 'Not logged in', url }) + '\\n');\n    process.exit(1);\n  }\n\n  const results = {};\n\n  for (const p of prompts) {\n    const idx = p.index ?? '?';\n    console.error('[gemini-auto] prompt', idx);\n\n    try {\n      await page.waitForSelector('div[role=\"textbox\"]', { timeout: 15000 });\n      await page.click('div[role=\"textbox\"]');\n      await page.waitForTimeout(300);\n\n      await page.fill('div[role=\"textbox\"]', String(p.text ?? ''));\n      await page.waitForTimeout(500);\n\n      const sendBtn = page.locator('button[aria-label=\"送信\"], button[aria-label=\"Send message\"]');\n      if (await sendBtn.count() > 0) await sendBtn.first().click();\n      else await page.keyboard.press('Enter');\n\n      await page.waitForTimeout(30000);\n\n      const responses = await page.locator('.markdown').all();\n      let text = '';\n      if (responses.length > 0) text = await responses[responses.length - 1].innerText();\n\n      results['result_p' + idx] = text || '(No response)';\n    } catch (e) {\n      results['result_p' + idx] = '(Error: ' + e.message + ')';\n    }\n\n    await page.waitForTimeout(1000);\n  }\n\n  await page.screenshot({ path: '/home/node/scripts/gemini-auto-result.png' });\n  await context.close();\n\n  // 必ずstdoutにJSON\n  process.stdout.write(JSON.stringify(results) + '\\n');\n}\n\nrun().catch(e => {\n  process.stdout.write(JSON.stringify({ error: String(e && e.message ? e.message : e) }) + '\\n');\n  process.exit(1);\n});\nSCRIPT_EOF\necho \"gemini-auto.js updated\"\n"
+      },
+      "id": "script-creator-001",
+      "name": "スクリプト作成",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [
+        288,
+        848
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "1kTsLwBHrSz1b2XqcZ7wjyboooTjgXP12IXerJrHY0Hc",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1kTsLwBHrSz1b2XqcZ7wjyboooTjgXP12IXerJrHY0Hc/edit?usp=drivesdk",
+          "cachedResultName": "n8n アカウントマスター"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1kTsLwBHrSz1b2XqcZ7wjyboooTjgXP12IXerJrHY0Hc/edit#gid=0",
+          "cachedResultName": "Profile"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "ID",
+              "lookupValue": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "24d7598c-90ae-4ab8-a9fe-35eab0db079a",
+      "name": "ブログデータ　読込",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [
+        640,
+        848
+      ],
+      "executeOnce": true,
+      "typeVersion": 4.7,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit?usp=drivesdk",
+          "cachedResultName": "n8n Noteブログ自動化マスター"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": 134870923,
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit#gid=134870923",
+          "cachedResultName": "キーワードリスト"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "Done_Database"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1ab8e1bc-b087-4bd7-822d-7aa7b5db0318",
+      "name": "Done_Database 読込",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [
+        816,
+        848
+      ],
+      "executeOnce": true,
+      "typeVersion": 4.7,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit?usp=drivesdk",
+          "cachedResultName": "n8n Noteブログ自動化マスター"
+        },
+        "sheetName": {
+          "__rl": true,
+          "mode": "list",
+          "value": "gid=0",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit#gid=0",
+          "cachedResultName": "記事プロンプト"
+        },
+        "options": {}
+      },
+      "id": "d912612e-552e-4d4e-b9a6-216f9c71d159",
+      "name": "記事プロンプト読込",
+      "type": "n8n-nodes-base.googleSheets",
+      "position": [
+        992,
+        848
+      ],
+      "typeVersion": 4.7,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const s2 = $json;\nconst s3List = $items('Done_Database 読込', 0) || [];\nconst s3 = s3List[0]?.json || {};\nconst blogDataList = $items('ブログデータ　読込', 0) || [];\nconst blogData = blogDataList[0]?.json || {};\n\nconst kwText = Array.isArray(s3.keyword_list)\n  ? s3.keyword_list.filter(Boolean).join('、')\n  : (s3.keyword_list || '');\n\nconst p1 = (s2.Prompt1 || '') + '\\n\\n【テキスト】\\n' + (s3.text_data || '');\nconst p2 = (s2.Prompt2 || '')\n  .split('{メインキーワード}').join(s3.main_keyword || '')\n  .split('{キーワード郡}').join(kwText);\nconst p3 = (s2.Prompt3 || '')\n  .split('{メインキーワード}').join(s3.main_keyword || '')\n  .split('{キーワード郡}').join(kwText)\n  .split('{blog_author}').join(blogData.blog_author || '')\n  .split('{blog_title}').join(blogData.blog_title || '')\n  .split('{blog_url}').join(blogData.blog_url || '')\n  .split('{blog_tone}').join(blogData.blog_tone || '');\nconst p4 = (s2.Prompt4 || '')\n  .split('{メインキーワード}').join(s3.main_keyword || '')\n  .split('{キーワード郡}').join(kwText)\n  .split('{blog_author}').join(blogData.blog_author || '')\n  .split('{blog_title}').join(blogData.blog_title || '')\n  .split('{blog_url}').join(blogData.blog_url || '')\n  .split('{blog_tone}').join(blogData.blog_tone || '');\nconst p5 = s2.Prompt5 || '';\nconst p6 = (s2.Prompt6 || '').split('{メインキーワード}').join(s3.main_keyword || '');\nconst p7 = s2.Prompt7 || '';\n\nconst promptObjects = [p1, p2, p3, p4, p5, p6, p7].map((text, i) => ({\n  text,\n  index: i + 1\n}));\n\nreturn [{ json: { prompts: promptObjects } }];\n"
+      },
+      "id": "33918586-6d8e-496a-89a8-702afcd58d46",
+      "name": "Build Prompts (Code)",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1168,
+        848
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "command": "=node /home/node/scripts/gemini-auto.js /tmp/gemini_input.json --file --mode=think --cdp=http://192.168.65.254:9222"
+      },
+      "id": "gemini-exec-001",
+      "name": "Gemini実行",
+      "type": "n8n-nodes-base.executeCommand",
+      "position": [
+        1968,
+        848
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "jsCode": "function toSafeString(str) {\n  let s = JSON.stringify(String(str ?? ''));\n  return s.substring(1, s.length - 1);\n}\n\n/**\n * Note向け整形\n * - 既存の改行はすべて削除（スペースに潰す）\n * - 空白を1つに圧縮\n * - 「。」で終わる文が2つ続いたときだけ、2文目の末尾に改行を1つ入れる\n *\n * 注意：\n * - 「。」以外（！？」等）はカウントに含めない（要望通り）\n * - 末尾が「。」でない最後の文（例: ？や！で終わる）は「。」を勝手に付けない\n */\nfunction normalizeForNote(text) {\n  let s = String(text || '');\n\n  // 1) 改行は全部スペースへ（多重改行地獄を根絶）\n  s = s.replace(/\\r\\n|\\r|\\n/g, ' ');\n\n  // 2) 連続空白（半角/タブ/全角）を1つに\n  s = s.replace(/[ \\t\\u3000]+/g, ' ').trim();\n  if (!s) return s;\n\n  // 3) 「。」区切りで分解（末尾が「。」でない場合は tail に残す）\n  const parts = s.split('。');\n\n  let tail = '';\n  let maruParts = parts;\n\n  if (s.endsWith('。')) {\n    // 末尾が「。」なら split の最後は空になりがちなので除去\n    if (maruParts.length > 0 && maruParts[maruParts.length - 1].trim() === '') {\n      maruParts.pop();\n    }\n  } else {\n    // 末尾が「。」でない場合、最後の要素は「。」で終わらない tail\n    tail = (maruParts.pop() ?? '').trim();\n  }\n\n  // 「。」で終わる文（= maruParts）を整形\n  maruParts = maruParts.map(p => p.trim()).filter(p => p.length > 0);\n\n  let out = '';\n  for (let i = 0; i < maruParts.length; i++) {\n    out += maruParts[i] + '。';\n\n    // 次がある場合のみ区切りを入れる\n    if (i !== maruParts.length - 1) {\n      // 2文目（i=1）, 4文目（i=3）...の末尾で改行を1つ\n      out += ((i % 2) === 1) ? '\\n' : ' ';\n    }\n  }\n\n  // tail があれば、最後に付け足す（「。」は付けない）\n  if (tail) {\n    if (!out) {\n      out = tail;\n    } else {\n      // 直前が改行ならそのまま続け、そうでなければスペースでつなぐ\n      out += out.endsWith('\\n') ? tail : (' ' + tail);\n    }\n  }\n\n  // 4) 改行の前後の空白を削除\n  out = out.replace(/[ \\t\\u3000]*\\n[ \\t\\u3000]*/g, '\\n');\n\n  // 5) 念のため改行2個以上は1個に\n  out = out.replace(/\\n{2,}/g, '\\n');\n\n  // 6) 念のため空白圧縮\n  out = out.replace(/[ \\t\\u3000]{2,}/g, ' ').trim();\n\n  return out;\n}\n\n// --------------------\n// ここから本体（stdout -> JSON 抽出）\n// --------------------\nconst stdout = $json.stdout || '';\nconst lines = stdout.split('\\n');\nlet result = {};\n\n// stdoutの中からJSON（result_pが入ってる行）を拾う\nfor (const line of lines) {\n  if (line.startsWith('{') && line.includes('result_p')) {\n    try {\n      result = JSON.parse(line);\n      break;\n    } catch (e) {}\n  }\n}\n\nif (Object.keys(result).length === 0) {\n  result = { error: 'Parse failed', raw: stdout };\n}\n\n// safeResult に各フィールドと *_safe を作る（既存仕様を維持）\nconst safeResult = {};\nfor (const key in result) {\n  if (typeof result[key] === 'string') {\n    safeResult[key] = result[key];\n    safeResult[key + '_safe'] = toSafeString(result[key]);\n  } else {\n    safeResult[key] = result[key];\n  }\n}\n\n// --------------------\n// p4 / p5 の本文採用ルール：文字数が多い方\n// --------------------\nconst p4 = safeResult.result_p4 || '';\nconst p5 = safeResult.result_p5 || '';\n\nconst len4 = p4.trim().length;\nconst len5 = p5.trim().length;\n\nlet articleBody = '';\nlet bodySource = '';\n\nif (len4 > len5) {\n  articleBody = p4;\n  bodySource = 'result_p4';\n} else {\n  // 同じ長さなら p5 を優先\n  articleBody = p5;\n  bodySource = 'result_p5';\n}\n\n// --------------------\n// Note向け整形（改行圧縮＋「。」2文ごとに改行1つ）\n// --------------------\nconst normalizedBody = normalizeForNote(articleBody);\n\n// 整形後の safe を作る（ここが重要：整形前のsafeを使わない）\nconst normalizedBodySafe = toSafeString(normalizedBody);\n\nsafeResult.body_source = bodySource;\nsafeResult.article_body = normalizedBody;\nsafeResult.article_body_safe = normalizedBodySafe;\n\nreturn { json: safeResult };\n"
+      },
+      "id": "result-parse-001",
+      "name": "結果パース",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        2144,
+        848
+      ],
+      "typeVersion": 2
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://note.com/api/v1/text_notes",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $('login').item.json.headers['set-cookie'].map(c => c.split(';')[0]).join('; ') }};{{ $('get_Cookie').item.json.headers['set-cookie'].find(c => c.startsWith(\"XSRF-TOKEN\")).split(';')[0] }}"
+            },
+            {
+              "name": "X-XSRF-TOKEN",
+              "value": "={{ $('get_Cookie').item.json.headers[\"set-cookie\"].find(c => c.startsWith(\"XSRF-TOKEN\")).split(';')[0].replace('XSRF-TOKEN=', '') }}"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Origin",
+              "value": "https://note.com"
+            },
+            {
+              "name": "Referer",
+              "value": "https://note.com/new"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"name\": \"{{ $('結果パース').item.json.result_p6 }}\",\n  \"index\": false,\n  \"is_lead_form\": false,\n  \"status\": \"draft\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1408,
+        1392
+      ],
+      "id": "02ea06a9-379a-4c0d-91af-21a0b82c0ba9",
+      "name": "draft1次作成"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://note.com/api/v1/text_notes/draft_save",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "id",
+              "value": "={{ $json.data.id }}"
+            },
+            {
+              "name": "is_temp_saved",
+              "value": "true"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $('login').item.json.headers['set-cookie'].map(c => c.split(';')[0]).join('; ') }};{{ $('get_Cookie').item.json.headers['set-cookie'].find(c => c.startsWith(\"XSRF-TOKEN\")).split(';')[0] }}"
+            },
+            {
+              "name": "X-XSRF-TOKEN",
+              "value": "={{ $('get_Cookie').item.json.headers[\"set-cookie\"].find(c => c.startsWith(\"XSRF-TOKEN\")).split(';')[0].replace('XSRF-TOKEN=', '') }}"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Origin",
+              "value": "https://editor.note.com/"
+            },
+            {
+              "name": "Referer",
+              "value": "https://editor.note.com/"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"name\": \"{{ $('結果パース').item.json.result_p6_safe }}\",\n  \"body\": \"{{ $('結果パース').item.json.article_body_safe }}\",\n  \"index\": false,\n  \"is_lead_form\": false,\n  \"status\": \"draft\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1616,
+        1392
+      ],
+      "id": "d3390262-57d0-4da7-87e1-84c12644aeaf",
+      "name": "draft2次作成"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://note.com/api/v1/sessions/sign_in",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $json.headers[\"set-cookie\"].map(c => c.split(';')[0]).join('; ') }}"
+            },
+            {
+              "name": "X-XSRF-TOKEN",
+              "value": "={{ $json.headers[\"set-cookie\"].find(c => c.startsWith(\"XSRF-TOKEN\")).split(';')[0].replace('XSRF-TOKEN=', '') }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\n  \"login\": \"tokoro@ideal-architects.co.jp\",\n  \"password\": \"YOUR_PASSWORD_HERE\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        944,
+        1392
+      ],
+      "id": "3a319376-ebb5-4f30-97ac-ff41a7b5dbb8",
+      "name": "login"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://note.com/api/v3/trackings/fp",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $('初期情報取得1').item.json.headers['set-cookie'].map(c => c.split(';')[0]).join('; ') }}; {{ $json.headers['set-cookie'].map(c => c.split(';')[0]).join('; ') }}"
+            },
+            {
+              "name": "X-XSRF-TOKEN",
+              "value": "={{ $('初期情報取得1').item.json.headers['set-cookie'].find(c => c.startsWith(\"XSRF-TOKEN\")).split(';')[0].replace('XSRF-TOKEN=', '') }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"fp\": \"{{ $('初期情報取得1').item.json.body.fp }}\"\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1184,
+        1392
+      ],
+      "id": "6c0ea837-a649-43f5-89e2-b1e3d8b867c2",
+      "name": "get_Cookie"
+    },
+    {
+      "parameters": {
+        "url": "=https://note.com/api/v3/notes/{{ $('draft1次作成').item.json.data.key }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $('login').item.json.headers['set-cookie'].map(c => c.split(';')[0]).join('; ') }};{{ $('get_Cookie').item.json.headers['set-cookie'].find(c => c.startsWith(\"XSRF-TOKEN\")).split(';')[0] }}"
+            },
+            {
+              "name": "X-XSRF-TOKEN",
+              "value": "={{ $('get_Cookie').item.json.headers[\"set-cookie\"].find(c => c.startsWith(\"XSRF-TOKEN\")).split(';')[0].replace('XSRF-TOKEN=', '') }}"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Origin",
+              "value": "https://editor.note.com/"
+            },
+            {
+              "name": "Referer",
+              "value": "https://editor.note.com/"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2144,
+        1408
+      ],
+      "id": "22e7bd90-2b86-4bf4-9393-f7bcb03bdf46",
+      "name": "get_draft_data"
+    },
+    {
+      "parameters": {
+        "method": "PUT",
+        "url": "=https://note.com/api/v1/text_notes/{{ $('draft1次作成').item.json.data.id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $('login').item.json.headers['set-cookie'].map(c => c.split(';')[0]).join('; ') }};{{ $('get_Cookie').item.json.headers['set-cookie'].find(c => c.startsWith(\"XSRF-TOKEN\")).split(';')[0] }}"
+            },
+            {
+              "name": "X-XSRF-TOKEN",
+              "value": "={{ $('get_Cookie').item.json.headers[\"set-cookie\"].find(c => c.startsWith(\"XSRF-TOKEN\")).split(';')[0].replace('XSRF-TOKEN=', '') }}"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Origin",
+              "value": "https://editor.note.com/"
+            },
+            {
+              "name": "Referer",
+              "value": "https://editor.note.com/"
+            },
+            {
+              "name": "X-Requested-With",
+              "value": "XMLHttpRequest"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  (() => {\n    // 直前の「下書き情報取得」ノードの結果を取得\n    // ※ノード名が違う場合は、左のパネルからドラッグして修正してください\n    const noteData = $('get_draft_data').item.json.data;\n    \n    // 【重要】サーバーが発行済みの正規UUIDを取得\n    // これを使わないと整合性が取れません\n    const uuid = noteData.reading_uuid;\n    \n    // 本文データの取得\n    const rawBody = noteData.note_draft ? noteData.note_draft.body : noteData.body;\n    \n    // 取得したUUIDを使って、正しい形式のHTMLタグを作成\n    const formattedBody = `<p name=\"${uuid}\" id=\"${uuid}\">${rawBody.replace(/\\n/g, '<br>')}</p>`;\n\n    // ブラウザの送信データ（ペイロード）を完全再現して返す\n    return {\n      \"id\": $('draft1次作成').item.json.data.id,\n      \"name\": noteData.name,\n      \"status\": \"published\", // 成功ログに合わせて published に設定\n      \"slug\": noteData.slug,\n      \"body_length\": formattedBody.length, // HTMLタグ込みの文字数\n      \"free_body\": formattedBody,          // UUID付きの正しいHTML\n      \"pay_body\": \"\",\n      \"sale_type\": \"free\",\n      \"price\": 0,\n      \"separator\": null,\n      \"index\": false,\n      \"limited\": false,\n      \"is_refund\": false,\n      \"disable_comment\": false,\n      \"enable_comments\": true,\n      \"send_notifications_flag\": true,\n      \"exclude_from_creator_top\": false,\n      \"exclude_ai_learning_reward\": false,\n      \"pinned\": false,\n      \"author_ids\": [],\n      \"magazine_ids\": [],\n      \"magazine_keys\": [],\n      \"hashtags\": [],\n      \"image_keys\": [],\n      \"circle_permissions\": [],\n      \"discount_campaigns\": [],\n      \"lead_form\": { \"is_active\": false, \"consent_url\": \"\" },\n      \"line_add_friend\": { \"is_active\": false, \"keyword\": \"\", \"add_friend_url\": \"\" },\n      \"line_add_friend_access_token\": \"\"\n    };\n  })()\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2304,
+        1408
+      ],
+      "id": "3ffcb055-8995-4d1e-89b9-f17cfe645cf4",
+      "name": "put_post_status"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://note.com/api/v3/trackings/fp",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"fp\":\"12d9add2998e7b8f30f957d7e9023450\"}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        688,
+        1392
+      ],
+      "id": "9e519670-5035-4922-9d43-43dcc38861f0",
+      "name": "初期情報取得1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://note.com/api/v1/image_upload/note_eyecatch",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Cookie",
+              "value": "={{ $('login').item.json.headers['set-cookie'].map(c => c.split(';')[0]).join('; ') }};{{ $('get_Cookie').item.json.headers['set-cookie'].find(c => c.startsWith(\"XSRF-TOKEN\")).split(';')[0] }}"
+            },
+            {
+              "name": "X-XSRF-TOKEN",
+              "value": "={{ $('get_Cookie').item.json.headers[\"set-cookie\"].find(c => c.startsWith(\"XSRF-TOKEN\")).split(';')[0].replace('XSRF-TOKEN=', '') }}"
+            },
+            {
+              "name": "User-Agent",
+              "value": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+            {
+              "name": "Origin",
+              "value": "https://note.com"
+            },
+            {
+              "name": "Referer",
+              "value": "https://note.com/new"
+            },
+            {
+              "name": "X-Requested-With",
+              "value": "XMLHttpRequest"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "file",
+              "inputDataFieldName": "data"
+            },
+            {
+              "name": "note_id",
+              "value": "={{ $('draft1次作成').item.json.data.id }}"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "neverError": true,
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1904,
+        1568
+      ],
+      "id": "10e8a4fb-61fa-4fa9-9e7b-cd7e8e33d53c",
+      "name": "upload_img"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash-image",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash-image (Nano Banana)"
+        },
+        "prompt": "={{ $json.result_p7 }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1,
+      "position": [
+        2352,
+        848
+      ],
+      "id": "6c865be2-c513-4be8-9288-f66a2de9cce7",
+      "name": "Generate an image",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "MAli2xTTI4oGoAYG",
+          "name": "Google webapp"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "/tmp/blog_header.png",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        416,
+        1392
+      ],
+      "id": "80482075-c769-4af5-9ad3-1599db103e93",
+      "name": "ブログヘッダー画像保存"
+    },
+    {
+      "parameters": {
+        "fileSelector": "/tmp/blog_header.png",
+        "options": {
+          "mimeType": "image/png"
+        }
+      },
+      "id": "9a21bf0c-b293-471d-a957-1884021e1c4c",
+      "name": "ブログヘッダー読込",
+      "type": "n8n-nodes-base.readWriteFile",
+      "position": [
+        1744,
+        1568
+      ],
+      "typeVersion": 1
+    },
+    {
+      "parameters": {
+        "operation": "toJson",
+        "options": {
+          "fileName": "gemini_input.json"
+        }
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1376,
+        848
+      ],
+      "id": "57ffef82-c7db-406c-84ae-c1625f9dbeba",
+      "name": "Convert to File"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "/tmp/gemini_input.json",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1584,
+        848
+      ],
+      "id": "36ce750a-338b-4576-98a3-534b681740f3",
+      "name": "Read/Write Files from Disk"
+    },
+    {
+      "parameters": {
+        "amount": 2,
+        "unit": "seconds"
+      },
+      "id": "wait-before-get-draft",
+      "name": "Wait",
+      "type": "n8n-nodes-base.wait",
+      "position": [
+        1984,
+        1408
+      ],
+      "webhookId": "wait-webhook-id",
+      "typeVersion": 1.1
+    }
+  ],
+  "connections": {
+    "Schedule Trigger4": {
+      "main": [
+        [
+          {
+            "node": "スクリプト作成",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "スクリプト作成": {
+      "main": [
+        [
+          {
+            "node": "ブログデータ　読込",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ブログデータ　読込": {
+      "main": [
+        [
+          {
+            "node": "Done_Database 読込",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Done_Database 読込": {
+      "main": [
+        [
+          {
+            "node": "記事プロンプト読込",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "記事プロンプト読込": {
+      "main": [
+        [
+          {
+            "node": "Build Prompts (Code)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Prompts (Code)": {
+      "main": [
+        [
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini実行": {
+      "main": [
+        [
+          {
+            "node": "結果パース",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "結果パース": {
+      "main": [
+        [
+          {
+            "node": "Generate an image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "draft1次作成": {
+      "main": [
+        [
+          {
+            "node": "draft2次作成",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "draft2次作成": {
+      "main": [
+        [
+          {
+            "node": "ブログヘッダー読込",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "login": {
+      "main": [
+        [
+          {
+            "node": "get_Cookie",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_Cookie": {
+      "main": [
+        [
+          {
+            "node": "draft1次作成",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "get_draft_data": {
+      "main": [
+        [
+          {
+            "node": "put_post_status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "初期情報取得1": {
+      "main": [
+        [
+          {
+            "node": "login",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "upload_img": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "get_draft_data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate an image": {
+      "main": [
+        [
+          {
+            "node": "ブログヘッダー画像保存",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ブログヘッダー画像保存": {
+      "main": [
+        [
+          {
+            "node": "初期情報取得1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ブログヘッダー読込": {
+      "main": [
+        [
+          {
+            "node": "upload_img",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File": {
+      "main": [
+        [
+          {
+            "node": "Read/Write Files from Disk",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read/Write Files from Disk": {
+      "main": [
+        [
+          {
+            "node": "Gemini実行",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "15c4c69b68a0d89ae26ebe1197eee8426ac5148f2255f927259d610172b7cbb4"
+  }
+}
