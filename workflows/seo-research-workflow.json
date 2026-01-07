@@ -1,0 +1,820 @@
+{
+  "nodes": [
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1856,
+        -128
+      ],
+      "id": "5e096ac0-f1ca-4db4-b309-1e4c38c4a3b9",
+      "name": "Loop Over Items1"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        2560,
+        -368
+      ],
+      "id": "57f5f3ef-54e1-4d8f-9d25-694f3f603ad4",
+      "name": "Loop Over Items2"
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $json.search_url || $json.text_data || '';\nlet urls = raw.split(/[,、\\n\\r\\t]+/).map(s => s.trim()).filter(Boolean);\nurls = urls.filter(u => !/^https?:\\/\\/(www\\.)?google\\./i.test(u));\nurls = [...new Set(urls)];\n\nreturn urls.map((u, i) => ({\n  json: { main_keyword: $json.main_keyword || '', url: u, order: i + 1 }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2560,
+        80
+      ],
+      "id": "ea4e6f4d-2de2-4f28-9ef6-bf35732b98df",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {}
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        1424,
+        -128
+      ],
+      "id": "c77a8ed3-efe1-4833-9071-fc2aaf2dfde5",
+      "name": "Schedule Trigger1"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Apifyの出力から本文セットを作る\nconst title = ($json.metadata?.title || $json.title || '').toString().trim();\nconst desc  = ($json.metadata?.description || $json.description || '').toString().trim();\n// 本文は text があれば優先、なければ markdown\nconst body  = ($json.text || $json.markdown || '').toString().trim();\n\n// 改行と空白をほどよく整える\nfunction clean(s) {\n  return s.replace(/\\s+\\n/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();\n}\n\nconst entry = clean(\n  [title, desc, body].filter(Boolean).join('\\n')\n);\n\n// 何も取れなかったら空で返す（後段でスキップ可能）\nreturn { json: { entry } };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3072,
+        -352
+      ],
+      "id": "ee423e93-da04-485e-b4b9-6a624504394a",
+      "name": "Pick Content"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        3280,
+        -208
+      ],
+      "id": "43546f87-f923-45f7-b9bb-0721fb8d7ae8",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "const data = $getWorkflowStaticData('global');\n\nreturn [{\n  json: {\n    joined: data.joined,\n    total: data.totalLength,\n  },\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2784,
+        -544
+      ],
+      "id": "78ee3b22-7b92-4dc9-b3cc-0e5c35a94faa",
+      "name": "Concat Entries"
+    },
+    {
+      "parameters": {
+        "content": "## ２．SEOリサーチ\n\n### 課題\n20000文字未満の場合は続行\n20000文字以上の場合はループを抜けたい\nCheck Limitで文字列自体は抽出済",
+        "height": 864,
+        "width": 2528,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1376,
+        -576
+      ],
+      "id": "217eac48-10b4-4ab1-a890-f50f50ca81fc",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo",
+          "mode": "list",
+          "cachedResultName": "n8n Noteブログ自動化マスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 134870923,
+          "mode": "list",
+          "cachedResultName": "キーワードリスト",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit#gid=134870923"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "keyword_list": "={{ $('メインキーワード取得').item.json.keyword_list }}",
+            "text_data": "={{ $('Add Result To Sheet').item.json.text_data }}",
+            "main_keyword": "={{ $('メインキーワード取得').item.json.main_keyword }}",
+            "search_url": "={{ $('メインキーワード取得').item.json.search_url }}",
+            "status": "Done_Database",
+            "last_run_at": "={{ $now }}"
+          },
+          "matchingColumns": [
+            "main_keyword"
+          ],
+          "schema": [
+            {
+              "id": "main_keyword",
+              "displayName": "main_keyword",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_run_at",
+              "displayName": "last_run_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "note_url",
+              "displayName": "note_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "error_message",
+              "displayName": "error_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "keyword_list",
+              "displayName": "keyword_list",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "text_volume",
+              "displayName": "text_volume",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "text_data",
+              "displayName": "text_data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "blogoutput_fulltext",
+              "displayName": "blogoutput_fulltext",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "blogoutput_title",
+              "displayName": "blogoutput_title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "search_url",
+              "displayName": "search_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "blog_url",
+              "displayName": "blog_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "blog_title",
+              "displayName": "blog_title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "blog_author",
+              "displayName": "blog_author",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3040,
+        -544
+      ],
+      "id": "303e118d-8aff-48ec-93c1-e019715b069e",
+      "name": "参考記事収集Upload",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "Run actor and get dataset",
+        "actorSource": "store",
+        "actorId": {
+          "__rl": true,
+          "value": "aYG0l9s7dbB7j3gbS",
+          "mode": "list",
+          "cachedResultName": "Website Content Crawler (apify/website-content-crawler)",
+          "cachedResultUrl": "https://console.apify.com/actors/aYG0l9s7dbB7j3gbS/input"
+        },
+        "customBody": "={\n  \"startUrls\": [\n    { \"url\": \"{{ ($json.url || '').trim() }}\" }\n  ],\n  \"crawlerType\": \"cheerio\",\n  \"maxCrawledPages\": 1,\n  \"includeHtml\": false,\n  \"includeMarkdown\": true,\n  \"maxConcurrency\": 1,\n  \"maxRequestRetries\": 1,\n  \"downloadMedia\": false\n}\n"
+      },
+      "type": "@apify/n8n-nodes-apify.apify",
+      "typeVersion": 1,
+      "position": [
+        2784,
+        -208
+      ],
+      "id": "16b20d2e-acb6-4ac3-ac3a-2a05974573d0",
+      "name": "Google 検索",
+      "credentials": {
+        "apifyApi": {
+          "id": "ZiVbISBUusruzrzN",
+          "name": "Apify account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo",
+          "mode": "list",
+          "cachedResultName": "n8n Noteブログ自動化マスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 134870923,
+          "mode": "list",
+          "cachedResultName": "キーワードリスト",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit#gid=134870923"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "main_keyword",
+              "lookupValue": "={{ $('Done_Search 抽出').item.json.main_keyword }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3072,
+        -192
+      ],
+      "id": "8e00c524-8d8f-494c-b239-18c596cf8a2d",
+      "name": "メインキーワード取得",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const limit = 10000;\nconst sep   = '\\n\\n---\\n\\n';\n\n// ループの元になっている「Merge」ノードの全アイテム\n// ↓ノード名が違う場合は \"Merge\" を実際のノード名に変える\nconst allItems = $items('Merge', 0);\n\n// 今、Loop Over Items の何番目を処理しているか\nconst idx = $itemIndex;\n\n// ここまで（0〜idx）での累積文字数と joined を、その場で計算する\nlet total  = 0;\nlet joined = '';\n\nfor (let i = 0; i <= idx && i < allItems.length; i++) {\n  const t = String(allItems[i].json.entry || '').trim();\n  if (!t) continue;\n\n  const addLen  = t.length + (joined ? sep.length : 0);\n  const nextLen = total + addLen;\n\n  if (nextLen > limit) {\n    // limit を超えるタイミングになったら、この item 以降は処理したくないので skip\n    return {\n      json: {\n        ...$json,\n        skip: true,\n        total,         // ここまでの累積\n      },\n    };\n  }\n\n  joined = joined ? joined + sep + t : t;\n  total  = nextLen;\n}\n\n// ここまでで limit 未満 → この item までは処理OK\nreturn {\n  json: {\n    ...$json,\n    skip: false,\n    total,\n    joined,          // 必要なら後続で使う\n  },\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3456,
+        -208
+      ],
+      "id": "9cdf9ff2-2e98-4723-88d3-c16d14deabb5",
+      "name": "Check Limit1"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo",
+          "mode": "list",
+          "cachedResultName": "n8n Noteブログ自動化マスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 134870923,
+          "mode": "list",
+          "cachedResultName": "キーワードリスト",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit#gid=134870923"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": 0,
+            "keyword_list": "={{ $('Done_Search 抽出').item.json.keyword_list }}",
+            "text_data": "={{ $json.joined }}",
+            "main_keyword": "={{ $('Done_Search 抽出').item.json.main_keyword }}",
+            "search_url": "={{ $('Done_Search 抽出').item.json.search_url }}",
+            "status": "Done_Search",
+            "last_run_at": "={{ $now }}",
+            "blogoutput_fulltext": "="
+          },
+          "matchingColumns": [
+            "main_keyword"
+          ],
+          "schema": [
+            {
+              "id": "main_keyword",
+              "displayName": "main_keyword",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "last_run_at",
+              "displayName": "last_run_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "note_url",
+              "displayName": "note_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "error_message",
+              "displayName": "error_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "keyword_list",
+              "displayName": "keyword_list",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "text_data",
+              "displayName": "text_data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "blogoutput_fulltext",
+              "displayName": "blogoutput_fulltext",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "blogoutput_title",
+              "displayName": "blogoutput_title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "search_url",
+              "displayName": "search_url",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        3664,
+        -208
+      ],
+      "id": "d8baa371-443b-4b34-9a83-290771bffff3",
+      "name": "Add Result To Sheet",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1) このループで抽出した記事本文（Pick Content の entry）を全部集める\nconst entries = $items('Pick Content').map(i => (i.json.entry || '').trim()).filter(Boolean);\n\n// 2) 1つのテキストに結合（区切り線は好みで変更OK）\nconst joined = entries.join('\\n\\n---\\n\\n');\n\n// 3) 既存の text_data と結合する（Lookup の結果を使う）\nconst row = $items('メインキーワード取得')[0]?.json || {};\nconst prev = String(row.text_data || '').trim();\n\nconst text_data = prev ? `${prev}\\n\\n=== batch ===\\n\\n${joined}` : joined;\n\n// 4) Update ノードに渡すフィールドを返す\nreturn [{\n  json: {\n    rowNumber: row.rowNumber,   // ← Lookup が返した行番号\n    status: 'Processed',        // 任意\n    text_data                    // ← 結合済みテキスト\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
+        -496
+      ],
+      "id": "adb896c2-cd84-40a2-ba36-c9c89db2ea07",
+      "name": "Concat Entries1"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo",
+          "mode": "list",
+          "cachedResultName": "n8n Noteブログ自動化マスター",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 134870923,
+          "mode": "list",
+          "cachedResultName": "キーワードリスト",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/1yFiDeKTsRLIwXogkcYMlHlxSa86BUfhmrYNSuBAlJSo/edit#gid=134870923"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "status",
+              "lookupValue": "Done_Search"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1648,
+        -128
+      ],
+      "id": "e4fc48b0-ce8b-45d5-8149-bad01d69f0b3",
+      "name": "Done_Search 抽出",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "kqPtYtZUaTfWiuBd",
+          "name": "Google Sheets tokoro"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "62a0758a-ae21-410f-aa22-c6b81cb8750a",
+              "leftValue": "skip",
+              "rightValue": "false",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3872,
+        -208
+      ],
+      "id": "c16202a2-5a96-4008-a9ff-892e9b4efd28",
+      "name": "If"
+    }
+  ],
+  "connections": {
+    "Loop Over Items1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items2": {
+      "main": [
+        [
+          {
+            "node": "Concat Entries",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Google 検索",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Trigger1": {
+      "main": [
+        [
+          {
+            "node": "Done_Search 抽出",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Content": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Check Limit1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Concat Entries": {
+      "main": [
+        [
+          {
+            "node": "参考記事収集Upload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google 検索": {
+      "main": [
+        [
+          {
+            "node": "Pick Content",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "メインキーワード取得",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "メインキーワード取得": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Check Limit1": {
+      "main": [
+        [
+          {
+            "node": "Add Result To Sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      }
+    },
+    "Add Result To Sheet": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Done_Search 抽出": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items2",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Concat Entries",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "15c4c69b68a0d89ae26ebe1197eee8426ac5148f2255f927259d610172b7cbb4"
+  }
+}
