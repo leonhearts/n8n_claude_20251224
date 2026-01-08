@@ -780,6 +780,11 @@ async function extendScene(page, config, prompt, index) {
           console.error('Clicked Scenebuilder tab');
           await page.waitForTimeout(3000);
         }
+
+        // 重要: リトライ時は最後のクリップをクリックしてから拡張する
+        console.error('Clicking last clip before retry...');
+        await page.waitForTimeout(2000); // クリップが読み込まれるまで待機
+        await clickTimelineEnd(page);
       }
 
       const result = await extendSceneInternal(page, config, prompt, index);
