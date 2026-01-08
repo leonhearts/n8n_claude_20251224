@@ -372,7 +372,7 @@ async function main() {
     }
 
     // ダウンロード
-    const tempPath = '/tmp/veo3_combined_temp.mp4';
+    const tempPath = config.outputPath.replace('.mp4', '_temp.mp4');
     await downloadVideo(finalVideoUrl, tempPath);
 
     // 音声なしでコピー
