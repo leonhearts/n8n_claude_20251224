@@ -56,6 +56,7 @@ const DEFAULT_CONFIG = {
   style: '', // スタイル指定（空の場合は元動画参照）
   aspectRatio: 'portrait', // キャラクター動画は縦向きがデフォルト
   imageOutputCount: 1,
+  sceneDelay: 3000, // 改善3: シーン間の待機時間（ミリ秒）
 };
 
 /**
@@ -238,7 +239,7 @@ async function extendWithPrompt(page, config, videoPrompt, index) {
 async function downloadFinalVideo(page, config) {
   console.error('\n=== Downloading final video ===');
 
-  const tempPath = '/tmp/veo3_character_temp.mp4';
+  const tempPath = config.outputPath.replace('.mp4', '_temp.mp4');
   let downloadedFile = null;
 
   let downloadBtn = await page.$(SELECTORS.downloadButton);
@@ -591,6 +592,13 @@ async function main() {
       const extendResult = await extendWithPrompt(page, config, videoPrompt, i + 1);
       results.push({ type: 'extension', index: i + 1, time: extendResult.time });
       totalTime += extendResult.time;
+
+      // ===== 改善3: シーン間の待機時間追加 =====
+      if (i < videoPrompts.length - 1) {
+        const delay = config.sceneDelay || 3000;
+        console.error(`Waiting ${delay / 1000}s before next scene...`);
+        await page.waitForTimeout(delay);
+      }
     }
 
     // ダウンロードをスキップする場合

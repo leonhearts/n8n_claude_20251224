@@ -552,6 +552,7 @@ async function clickAddToSceneAndGoToBuilder(page) {
 
 /**
  * シーン拡張の内部処理（拡張ボタンクリック→プロンプト入力→生成→待機）
+ * 改善1: メニュー選択にリトライロジック追加、タイムアウト延長
  */
 async function extendSceneInternal(page, config, prompt, index) {
   await dismissNotifications(page);
@@ -570,17 +571,49 @@ async function extendSceneInternal(page, config, prompt, index) {
     }
   }
 
-  await page.evaluate(() => {
-    const btn = document.querySelector('#PINHOLE_ADD_CLIP_CARD_ID');
-    if (btn && !btn.disabled) btn.click();
-  });
-  console.error('Clicked add clip button (via JS)');
-  await page.waitForTimeout(1000);
+  // ===== 改善1: メニュー選択にリトライロジック追加 =====
+  const MAX_MENU_RETRIES = 3;
+  let menuSuccess = false;
 
-  const extendOption = await page.waitForSelector(SELECTORS.extendOption, { timeout: 5000 });
-  if (!extendOption) throw new Error('Extend option not found');
-  await extendOption.click({ force: true });
-  console.error('Selected extend option');
+  for (let attempt = 1; attempt <= MAX_MENU_RETRIES; attempt++) {
+    // クリップ追加ボタンをクリック
+    await page.evaluate(() => {
+      const btn = document.querySelector('#PINHOLE_ADD_CLIP_CARD_ID');
+      if (btn && !btn.disabled) btn.click();
+    });
+    console.error('Clicked add clip button (via JS)');
+    await page.waitForTimeout(1500);
+
+    // 拡張オプションを探す（タイムアウト延長: 5s → 10s）
+    try {
+      const extendOption = await page.waitForSelector(SELECTORS.extendOption, {
+        timeout: 10000,
+        state: 'visible'
+      });
+
+      if (extendOption) {
+        await extendOption.click({ force: true });
+        console.error('Selected extend option');
+        menuSuccess = true;
+        break;
+      }
+    } catch (e) {
+      console.error(`Attempt ${attempt}/${MAX_MENU_RETRIES}: Extend option not visible - ${e.message}`);
+
+      // メニューを閉じて再試行
+      await page.keyboard.press('Escape');
+      const waitTime = 2000 * attempt;
+      console.error(`Waiting ${waitTime}ms before retry...`);
+      await page.waitForTimeout(waitTime);
+    }
+  }
+
+  if (!menuSuccess) {
+    await page.screenshot({ path: `/tmp/veo3-extend-failed-scene${index}.png` });
+    throw new Error(`Failed to select extend option after ${MAX_MENU_RETRIES} attempts`);
+  }
+  // ===== 改善1 ここまで =====
+
   await page.waitForTimeout(2000);
 
   await inputPromptAndCreate(page, prompt, config);
