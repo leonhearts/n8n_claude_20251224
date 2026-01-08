@@ -865,7 +865,23 @@ async function selectFrameToVideoModeOnly(page) {
 
   await page.waitForTimeout(1000);
 
-  const modeBtn = await findElement(page, SELECTORS.modeSelector);
+  // モードセレクタを探す（リトライ付き）
+  let modeBtn = null;
+  for (let i = 0; i < 5; i++) {
+    modeBtn = await findElement(page, SELECTORS.modeSelector);
+    if (modeBtn) break;
+
+    // 別のセレクタも試す
+    modeBtn = await page.$('button[aria-haspopup="listbox"]');
+    if (modeBtn) break;
+
+    modeBtn = await page.$('[data-testid*="mode"]');
+    if (modeBtn) break;
+
+    console.error(`  Mode selector not found, retrying... (${i + 1}/5)`);
+    await page.waitForTimeout(1000);
+  }
+
   if (modeBtn) {
     await modeBtn.click({ force: true });
     console.error('Clicked mode selector');
@@ -876,7 +892,20 @@ async function selectFrameToVideoModeOnly(page) {
       await frameOption.click({ force: true });
       console.error('Selected Frame-to-Video');
       await page.waitForTimeout(2000);
+    } else {
+      // 英語版も試す
+      const frameOptionEn = await page.$('text=Frame to Video');
+      if (frameOptionEn) {
+        await frameOptionEn.click({ force: true });
+        console.error('Selected Frame-to-Video (English)');
+        await page.waitForTimeout(2000);
+      } else {
+        console.error('WARNING: Frame-to-Video option not found');
+      }
     }
+  } else {
+    console.error('WARNING: Mode selector not found - Frame-to-Video mode may not be selected');
+    await page.screenshot({ path: '/tmp/veo3-mode-selector-not-found.png' });
   }
 }
 
