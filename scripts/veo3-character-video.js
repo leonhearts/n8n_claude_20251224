@@ -239,7 +239,7 @@ async function extendWithPrompt(page, config, videoPrompt, index) {
 async function downloadFinalVideo(page, config) {
   console.error('\n=== Downloading final video ===');
 
-  const tempPath = '/tmp/veo3_character_temp.mp4';
+  const tempPath = config.outputPath.replace('.mp4', '_temp.mp4');
   let downloadedFile = null;
 
   let downloadBtn = await page.$(SELECTORS.downloadButton);
