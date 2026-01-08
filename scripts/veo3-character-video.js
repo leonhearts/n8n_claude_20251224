@@ -1,305 +1,84 @@
 /**
- * Veo3 キャラクター動画生成スクリプト
+ * Veo3 キャラクター動画生成
  *
- * スプレッドシートからプロンプトを読み込み、
- * 1つのベース画像から複数シーンの動画を生成
+ * スプレッドシートデータから複数シーンのキャラクター動画を生成
+ *
+ * ワークフロー:
+ * 1. 画像プロンプトからベース画像を生成（ダウンロードなし）
+ * 2. 「Add To Prompt」ボタンをクリック
+ * 3. 動画プロンプト1を入力 → Frame-to-Videoモード → 生成 → シーンに追加
+ * 4. ループ: タイムライン右端クリック → 拡張 → 動画プロンプトN → 生成
+ * 5. 最終動画をダウンロード
  *
  * 使用方法:
- * node veo3-character-video.js /tmp/config.json
+ * node veo3-character-video.js '{"imagePrompt": "...", "videoPrompts": ["...", "..."], "outputPath": "/tmp/output.mp4"}'
  *
- * config.json:
- * {
- *   "imagePrompt": "ベース画像のプロンプト",
- *   "videoPrompts": ["シーン1のプロンプト", "シーン2のプロンプト", ...],
- *   "outputPath": "/tmp/output.mp4",
- *   "aspectRatio": "portrait|landscape|square",
- *   "download": true,
- *   "keepAudio": true
- * }
+ * または設定ファイル:
+ * node veo3-character-video.js /path/to/config.json
  */
 
 const { chromium } = require('playwright');
 const fs = require('fs');
 const path = require('path');
-const https = require('https');
-const http = require('http');
 const { execSync } = require('child_process');
 
-// Default configuration
+// 共通モジュールをインポート
+const common = require('./veo3-common');
+const {
+  SELECTORS,
+  DEFAULT_CONFIG_BASE,
+  downloadFile,
+  dismissNotifications,
+  dismissConsentPopup,
+  dismissFileDialog,
+  findElement,
+  startNewProject,
+  selectImagesMode,
+  selectVideosMode,
+  configureImageSettings,
+  generateImage,
+  inputPromptAndCreate,
+  waitForVideoGeneration,
+  clickAddToSceneAndGoToBuilder,
+  extendScene,
+  clickTimelineEnd,
+  clickAddToPrompt,
+  selectFrameToVideoModeOnly,
+} = common;
+
+// このスクリプト固有のデフォルト設定
 const DEFAULT_CONFIG = {
+  ...DEFAULT_CONFIG_BASE,
   imagePrompt: '',
   videoPrompts: [],
-  outputPath: '/tmp/veo3_character_final.mp4',
-  aspectRatio: 'portrait',
-  movieTime: '15s',
-  download: true,
-  keepAudio: false,
-  waitTimeout: 600000,
-  screenshotDir: '/tmp'
-};
-
-// Selectors
-const SELECTORS = {
-  promptInput: '#PINHOLE_TEXT_AREA_ELEMENT_ID',
-  createButton: [
-    'button[aria-label="作成"]',
-    'button:has(i:text("arrow_forward"))',
-  ],
-  settingsButton: [
-    'button[aria-label*="設定"]',
-    'button:has(i:text("tune"))',
-  ],
-  videoElement: 'video',
-  newProjectButton: [
-    'button:has-text("新しいプロジェクト")',
-    'button:has(i:text("add_2"))',
-  ],
-  // Images mode
-  imagesButton: 'button:has-text("Images")',
-  addToPromptButton: 'button:has-text("Add To Prompt")',
-  // Videos mode
-  videosButton: 'button:has-text("Videos")',
-  modeSelector: 'button[role="combobox"]',
-  frameToVideoOption: 'text=Frame-to-Video',
-  // Scene builder
-  addToSceneButton: 'button:has-text("Add to Scene")',
-  scenebuilderTab: '[role="tab"]:has-text("Scenebuilder")',
-  addClipButton: '#PINHOLE_ADD_CLIP_CARD_ID',
-  extendOption: '[role="menuitem"]:has-text("拡張")',
-  extendOptionEn: '[role="menuitem"]:has-text("Extend")',
-  // Aspect ratio settings
-  aspectRatioButton: 'button:has-text("9:16"), button:has-text("16:9"), button:has-text("1:1")',
-  outputCountButton: 'button:has-text("1"), button:has-text("2"), button:has-text("4")',
-  // Download
-  downloadButton: 'button:has(i:text("download"))',
-  // Timeline
-  timelineArea: '[class*="timeline"], [class*="Timeline"]',
+  outputPath: '/tmp/veo3_character.mp4',
+  movieTime: 15, // 目標動画時間（秒）
+  style: '', // スタイル指定（空の場合は元動画参照）
+  aspectRatio: 'portrait', // キャラクター動画は縦向きがデフォルト
+  imageOutputCount: 1,
+  sceneDelay: 3000, // 改善3: シーン間の待機時間（ミリ秒）
 };
 
 /**
- * Download video from URL
- */
-async function downloadVideo(url, outputPath) {
-  return new Promise((resolve, reject) => {
-    const protocol = url.startsWith('https') ? https : http;
-    const file = fs.createWriteStream(outputPath);
-
-    console.error('Downloading: ' + outputPath);
-
-    protocol.get(url, (response) => {
-      if (response.statusCode === 301 || response.statusCode === 302) {
-        downloadVideo(response.headers.location, outputPath).then(resolve).catch(reject);
-        return;
-      }
-      if (response.statusCode !== 200) {
-        reject(new Error('Download failed: ' + response.statusCode));
-        return;
-      }
-      response.pipe(file);
-      file.on('finish', () => {
-        file.close();
-        console.error('Downloaded: ' + outputPath);
-        resolve(outputPath);
-      });
-    }).on('error', reject);
-  });
-}
-
-/**
- * Dismiss notifications
- */
-async function dismissNotifications(page) {
-  try {
-    const items = await page.$$('[data-radix-collection-item]');
-    for (const item of items) {
-      const box = await item.boundingBox();
-      if (box) {
-        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-        await page.mouse.down();
-        await page.mouse.move(box.x + box.width + 100, box.y + box.height / 2, { steps: 5 });
-        await page.mouse.up();
-        await page.waitForTimeout(200);
-      }
-    }
-  } catch (e) {}
-}
-
-/**
- * Find visible element from multiple selectors
- */
-async function findElement(page, selectors) {
-  const list = Array.isArray(selectors) ? selectors : [selectors];
-  for (const sel of list) {
-    try {
-      const el = await page.$(sel);
-      if (el && await el.isVisible()) return el;
-    } catch (e) {}
-  }
-  return null;
-}
-
-/**
- * Wait for element with timeout
- */
-async function waitForElement(page, selectors, timeout = 10000) {
-  const list = Array.isArray(selectors) ? selectors : [selectors];
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < timeout) {
-    const el = await findElement(page, list);
-    if (el) return el;
-    await page.waitForTimeout(500);
-  }
-  return null;
-}
-
-/**
- * Click element using JavaScript (bypasses overlays)
- */
-async function jsClick(page, selector) {
-  await page.evaluate((sel) => {
-    const el = document.querySelector(sel);
-    if (el) el.click();
-  }, selector);
-}
-
-/**
- * Start new project
- */
-async function startNewProject(page) {
-  console.error('Opening: https://labs.google/fx/tools/flow');
-  await page.goto('https://labs.google/fx/tools/flow', { waitUntil: 'domcontentloaded', timeout: 60000 });
-  await page.waitForTimeout(5000);
-
-  // Login check
-  if (page.url().includes('accounts.google.com')) {
-    throw new Error('Not logged in to Google');
-  }
-
-  await dismissNotifications(page);
-
-  // Click new project button if visible
-  const newBtn = await findElement(page, SELECTORS.newProjectButton);
-  if (newBtn) {
-    await newBtn.click();
-    await page.waitForTimeout(5000);
-  }
-}
-
-/**
- * Switch to Images mode
- */
-async function switchToImagesMode(page) {
-  console.error('Switching to Images mode...');
-
-  // Try clicking Images button via JavaScript to avoid overlay issues
-  try {
-    await page.evaluate(() => {
-      const btns = Array.from(document.querySelectorAll('button'));
-      const imagesBtn = btns.find(b => b.textContent.includes('Images'));
-      if (imagesBtn) imagesBtn.click();
-    });
-    console.error('Clicked Images button (via JS)');
-    await page.waitForTimeout(2000);
-  } catch (e) {
-    console.error('Images button not found');
-  }
-}
-
-/**
- * Switch to Videos mode
- */
-async function switchToVideosMode(page) {
-  console.error('Switching to Videos mode...');
-
-  try {
-    await page.evaluate(() => {
-      const btns = Array.from(document.querySelectorAll('button'));
-      const videosBtn = btns.find(b => b.textContent.includes('Videos'));
-      if (videosBtn) videosBtn.click();
-    });
-    console.error('Clicked Videos button (via JS)');
-    await page.waitForTimeout(2000);
-  } catch (e) {
-    console.error('Videos button not found');
-  }
-}
-
-/**
- * Configure image settings (aspect ratio, output count)
- */
-async function configureImageSettings(page, aspectRatio) {
-  console.error('Configuring image settings...');
-
-  try {
-    // Open settings
-    const settingsBtn = await findElement(page, SELECTORS.settingsButton);
-    if (settingsBtn) {
-      await settingsBtn.click({ force: true });
-      await page.waitForTimeout(1000);
-      console.error('Clicked settings button');
-
-      // Select aspect ratio
-      const aspectMap = {
-        'portrait': '9:16',
-        'landscape': '16:9',
-        'square': '1:1'
-      };
-      const targetAspect = aspectMap[aspectRatio] || '9:16';
-
-      const aspectBtn = await page.$(`button:has-text("${targetAspect}")`);
-      if (aspectBtn) {
-        await aspectBtn.click({ force: true });
-        console.error('Clicked aspect ratio button');
-        await page.waitForTimeout(500);
-        console.error('Selected aspect ratio: ' + aspectRatio);
-      }
-
-      // Select output count = 1
-      const outputBtn = await page.$('button:has-text("1")');
-      if (outputBtn) {
-        await outputBtn.click({ force: true });
-        console.error('Clicked output count button');
-        await page.waitForTimeout(500);
-        console.error('Selected output count: 1');
-      }
-
-      // Close settings by clicking elsewhere
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(500);
-    }
-
-    console.error('Image settings configured');
-  } catch (e) {
-    console.error('Settings configuration failed: ' + e.message);
-  }
-}
-
-/**
- * Generate base image
+ * ベース画像を生成（ダウンロードなし）
  */
 async function generateBaseImage(page, config) {
   console.error('\n=== Generating Base Image ===');
   console.error('Image prompt: ' + config.imagePrompt.substring(0, 80) + '...');
 
-  // Switch to Images mode
-  await switchToImagesMode(page);
-  await page.waitForTimeout(1000);
+  // 画像生成モードに切り替え
+  await selectImagesMode(page);
 
-  // Verify we're in Images mode
-  const imagesActive = await page.$('button[aria-pressed="true"]:has-text("Images")');
-  if (imagesActive) {
-    console.error('Images mode activated successfully');
-  }
-
-  // Wait for UI to update
   console.error('Waiting for UI to update after mode switch...');
-  await page.waitForTimeout(2000);
+  await page.waitForTimeout(3000);
 
-  // Configure settings
-  await configureImageSettings(page, config.aspectRatio);
+  // 画像設定を構成
+  await configureImageSettings(page, {
+    aspectRatio: config.aspectRatio,
+    imageOutputCount: config.imageOutputCount || 1,
+  });
 
-  // Enter prompt
+  // プロンプト入力
   const promptInput = await page.waitForSelector(SELECTORS.promptInput, { timeout: 10000 });
   if (!promptInput) throw new Error('Prompt input not found');
 
@@ -309,392 +88,426 @@ async function generateBaseImage(page, config) {
   await promptInput.fill(config.imagePrompt);
   await page.waitForTimeout(1000);
 
-  // Click create button
-  const createBtn = await findElement(page, SELECTORS.createButton);
+  // 作成ボタンをクリック
+  let createBtn = await findElement(page, SELECTORS.createButton);
   if (!createBtn) throw new Error('Create button not found');
 
-  // Wait for button to be enabled
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < 10; i++) {
     const disabled = await createBtn.getAttribute('disabled');
-    if (disabled === null) break;
+    if (!disabled) break;
     await page.waitForTimeout(500);
+    createBtn = await findElement(page, SELECTORS.createButton);
   }
 
-  await createBtn.click({ force: true });
+  await createBtn.evaluate(el => el.click());
   console.error('Clicked create button');
-  await page.waitForTimeout(3000);
 
-  // Wait for image generation
+  // 画像生成完了を待機
   console.error('Waiting for image generation...');
-  const startTime = Date.now();
+  let generated = false;
+  let consecutiveErrors = 0;
+  const maxConsecutiveErrors = 3;
 
-  while (Date.now() - startTime < config.waitTimeout) {
-    await page.waitForTimeout(5000);
-    await dismissNotifications(page);
-
-    // Check for "Add To Prompt" button which indicates completion
-    const addToPromptBtn = await page.$('button:has-text("Add To Prompt")');
-    if (addToPromptBtn && await addToPromptBtn.isVisible()) {
-      console.error('Image generated! Found "Add To Prompt" button');
-      break;
-    }
-  }
-
-  console.error('Base image generated successfully (not downloading)');
-  console.error('Image generation completed in ' + Math.round((Date.now() - startTime) / 1000) + 's');
-}
-
-/**
- * Select Frame-to-Video mode (uses generated image as frame)
- */
-async function selectFrameToVideoMode(page) {
-  console.error('Selecting Frame-to-Video mode (without upload)...');
-
-  // Click mode selector
-  const modeBtn = await findElement(page, SELECTORS.modeSelector);
-  if (modeBtn) {
-    await modeBtn.click({ force: true });
-    console.error('Clicked mode selector');
-    await page.waitForTimeout(1000);
-
-    // Select Frame-to-Video
-    const f2vOption = await page.$('text=Frame-to-Video');
-    if (f2vOption) {
-      await f2vOption.click({ force: true });
-      console.error('Selected Frame-to-Video');
-      await page.waitForTimeout(1000);
-    }
-  }
-}
-
-/**
- * Generate first video from image
- */
-async function generateFirstVideo(page, config) {
-  console.error('\n=== Generating First Video ===');
-  console.error('Video prompt: ' + config.videoPrompts[0].substring(0, 80) + '...');
-
-  // Click "Add To Prompt" to use generated image
-  console.error('Looking for Add To Prompt button...');
-  const addToPromptBtn = await page.waitForSelector('button:has-text("Add To Prompt")', { timeout: 10000 });
-  if (addToPromptBtn) {
-    await addToPromptBtn.click({ force: true });
-    console.error('Clicked Add To Prompt button');
+  for (let i = 0; i < 120; i++) {
     await page.waitForTimeout(2000);
-  }
 
-  // Switch to Videos mode
-  await switchToVideosMode(page);
+    try {
+      const pageText = await page.evaluate(() => document.body.innerText);
+      consecutiveErrors = 0;
 
-  // Select Frame-to-Video mode
-  await selectFrameToVideoMode(page);
+      if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
+        console.error('Generation error detected on page');
+        throw new Error('Image generation failed: 生成できませんでした');
+      }
+    } catch (evalErr) {
+      if (evalErr.message.includes('Execution context was destroyed') ||
+          evalErr.message.includes('navigation')) {
+        consecutiveErrors++;
+        console.error(`  Page navigation detected (${consecutiveErrors}/${maxConsecutiveErrors}), waiting...`);
 
-  // Enter video prompt
-  const promptInput = await page.waitForSelector(SELECTORS.promptInput, { timeout: 10000 });
-  if (!promptInput) throw new Error('Prompt input not found');
+        if (consecutiveErrors >= maxConsecutiveErrors) {
+          console.error('  Multiple navigation errors, waiting for page to stabilize...');
+          await page.waitForTimeout(5000);
+          consecutiveErrors = 0;
+        }
+        continue;
+      }
+      if (evalErr.message.includes('生成できませんでした')) {
+        throw evalErr;
+      }
+    }
 
-  await promptInput.click();
-  await promptInput.fill('');
-  await page.waitForTimeout(300);
-  await promptInput.fill(config.videoPrompts[0]);
-  await page.waitForTimeout(1000);
-
-  // Click create button
-  const createBtn = await findElement(page, SELECTORS.createButton);
-  if (!createBtn) throw new Error('Create button not found');
-
-  for (let i = 0; i < 20; i++) {
-    const disabled = await createBtn.getAttribute('disabled');
-    if (disabled === null) break;
-    await page.waitForTimeout(500);
-  }
-
-  await createBtn.click({ force: true });
-  console.error('Clicked create button');
-  console.error('Video generation started...');
-  await page.waitForTimeout(5000);
-
-  // Wait for video generation
-  const startTime = Date.now();
-
-  while (Date.now() - startTime < config.waitTimeout) {
-    await page.waitForTimeout(15000);
-    console.error('  ' + Math.round((Date.now() - startTime) / 1000) + 's elapsed');
-    await dismissNotifications(page);
-
-    // Check for "Add to Scene" button
-    const addToSceneBtn = await page.$('button:has-text("Add to Scene")');
-    if (addToSceneBtn && await addToSceneBtn.isVisible()) {
-      console.error('Video generated! Found "Add to Scene" button');
-
-      // Click Add to Scene
-      await addToSceneBtn.click({ force: true });
-      console.error('Clicked Add to Scene button');
-      await page.waitForTimeout(2000);
-
-      // Switch to Scenebuilder tab
-      const scenebuilderTab = await page.$('[role="tab"]:has-text("Scenebuilder")');
-      if (scenebuilderTab) {
-        await scenebuilderTab.click({ force: true });
-        console.error('Clicked Scenebuilder tab');
-        await page.waitForTimeout(2000);
+    try {
+      // 「Add To Prompt」ボタンが表示されたら画像生成完了
+      const addToPromptBtn = await page.$(SELECTORS.addToPromptButton);
+      if (addToPromptBtn && await addToPromptBtn.isVisible()) {
+        generated = true;
+        console.error('Image generated! Found "Add To Prompt" button');
+        break;
       }
 
-      // Wait for scene builder to load
-      console.error('Waiting for scene builder...');
-      await page.waitForSelector(SELECTORS.addClipButton, { timeout: 30000 });
-
-      // Wait for button to be enabled
-      for (let i = 0; i < 20; i++) {
-        const addClipBtn = await page.$(SELECTORS.addClipButton);
-        if (addClipBtn) {
-          const disabled = await addClipBtn.getAttribute('disabled');
-          if (disabled === null) {
-            console.error('Scene builder loaded and button enabled');
+      // または画像が表示されていることを確認
+      const images = await page.$$('img');
+      for (const img of images) {
+        const src = await img.getAttribute('src');
+        if (src && (src.startsWith('data:image') || src.includes('generated') || src.includes('blob:'))) {
+          // ダウンロードボタンも確認
+          const downloadBtn = await page.$(SELECTORS.downloadButton);
+          if (downloadBtn && await downloadBtn.isVisible()) {
+            generated = true;
+            console.error('Image generated (download button visible)!');
             break;
           }
         }
-        await page.waitForTimeout(500);
       }
+      if (generated) break;
 
-      return;
+    } catch (checkErr) {
+      if (checkErr.message.includes('Execution context was destroyed') ||
+          checkErr.message.includes('navigation')) {
+        console.error('  Context error during image check, continuing...');
+        continue;
+      }
+    }
+
+    if (i % 15 === 14) {
+      console.error(`  ${(i + 1) * 2}s elapsed`);
     }
   }
 
-  throw new Error('First video generation timeout');
-}
-
-/**
- * Click timeline at the end to position for extension
- */
-async function clickTimelineEnd(page) {
-  console.error('Clicking timeline end...');
-
-  try {
-    // Find timeline area
-    const timelineArea = await page.$('[class*="timeline"], [class*="Timeline"], [class*="scrubber"]');
-    if (timelineArea) {
-      const box = await timelineArea.boundingBox();
-      if (box) {
-        // Click near the right end
-        await page.mouse.click(box.x + box.width - 20, box.y + box.height / 2);
-        console.error('Clicked timeline at right end');
-        await page.waitForTimeout(1000);
-        return;
-      }
-    }
-    console.error('Timeline area not found');
-  } catch (e) {
-    console.error('Timeline click failed: ' + e.message);
+  if (!generated) {
+    throw new Error('Image generation timed out');
   }
+
+  console.error('Base image generated successfully (not downloading)');
+  return true;
 }
 
 /**
- * Extend scene with retry logic
- * This is the key function with improved error handling
+ * 最初の動画を生成（Add To Prompt → Frame-to-Video → 生成）
  */
-async function extendScene(page, config, sceneIndex, videoPrompt) {
-  console.error(`\n=== Extending Scene ${sceneIndex} ===`);
+async function generateFirstVideo(page, config, videoPrompt) {
+  console.error('\n=== Generating First Video ===');
   console.error('Video prompt: ' + videoPrompt.substring(0, 80) + '...');
 
-  // Click timeline end first
-  await clickTimelineEnd(page);
-
-  // Retry logic for clicking add clip button and selecting extend
-  const MAX_MENU_RETRIES = 5;
-  let menuSuccess = false;
-
-  for (let attempt = 1; attempt <= MAX_MENU_RETRIES; attempt++) {
-    console.error(`\n=== Extending Scene ${sceneIndex} ===`);
-
-    await dismissNotifications(page);
-
-    // Wait for add clip button to be visible and enabled
-    console.error('Waiting for add clip button to be enabled...');
-    let addClipBtn = null;
-
-    for (let i = 0; i < 30; i++) {
-      addClipBtn = await page.$(SELECTORS.addClipButton);
-      if (addClipBtn) {
-        const isVisible = await addClipBtn.isVisible();
-        const disabled = await addClipBtn.getAttribute('disabled');
-        if (isVisible && disabled === null) {
-          console.error('Add clip button is enabled');
-          break;
-        }
-      }
-      await page.waitForTimeout(1000);
-    }
-
-    if (!addClipBtn) {
-      throw new Error('Add clip button not found');
-    }
-
-    // Click add clip button using JavaScript to avoid overlay issues
-    await page.evaluate(() => {
-      const btn = document.querySelector('#PINHOLE_ADD_CLIP_CARD_ID');
-      if (btn) btn.click();
-    });
-    console.error('Clicked add clip button (via JS)');
-    await page.waitForTimeout(1500);
-
-    // Try to find extend option with retry
-    let extendOption = null;
-
-    // First try Japanese selector
-    extendOption = await page.$('[role="menuitem"]:has-text("拡張")');
-    if (!extendOption) {
-      // Try English selector
-      extendOption = await page.$('[role="menuitem"]:has-text("Extend")');
-    }
-
-    if (extendOption) {
-      const isVisible = await extendOption.isVisible();
-      if (isVisible) {
-        await extendOption.click({ force: true });
-        console.error('Selected extend option');
-        menuSuccess = true;
-        break;
-      } else {
-        console.error(`Attempt ${attempt}: Extend option found but hidden`);
-
-        // Close the menu by pressing Escape or clicking elsewhere
-        await page.keyboard.press('Escape');
-        await page.waitForTimeout(1000);
-
-        // Wait longer before retry
-        const waitTime = 2000 * attempt;
-        console.error(`Waiting ${waitTime}ms before retry...`);
-        await page.waitForTimeout(waitTime);
-
-        // Try scrolling the menu if it exists
-        try {
-          await page.evaluate(() => {
-            const menu = document.querySelector('[role="menu"]');
-            if (menu) menu.scrollTop = 0;
-          });
-        } catch (e) {}
-      }
-    } else {
-      console.error(`Attempt ${attempt}: Extend option not found in menu`);
-
-      // Close menu and retry
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(1000 * attempt);
-    }
+  // 「Add To Prompt」ボタンをクリック
+  const addToPromptSuccess = await clickAddToPrompt(page);
+  if (!addToPromptSuccess) {
+    throw new Error('Failed to click Add To Prompt button');
   }
 
-  if (!menuSuccess) {
-    // Take screenshot for debugging
-    const screenshotPath = `/tmp/veo3-extend-failed-scene${sceneIndex}.png`;
-    await page.screenshot({ path: screenshotPath });
-    console.error(`Screenshot saved: ${screenshotPath}`);
-    throw new Error(`Failed to select extend option after ${MAX_MENU_RETRIES} attempts`);
-  }
-
+  // Videosモードに切り替え
+  await selectVideosMode(page);
   await page.waitForTimeout(2000);
 
-  // Enter video prompt
-  const promptInput = await page.waitForSelector(SELECTORS.promptInput, { timeout: 10000 });
-  if (!promptInput) throw new Error('Prompt input not found');
+  // Frame-to-Videoモードを選択（画像アップロードなし、既にプロンプトに追加されているため）
+  await selectFrameToVideoModeOnly(page);
 
-  await promptInput.click();
-  await promptInput.fill('');
-  await page.waitForTimeout(300);
-  await promptInput.fill(videoPrompt);
-  await page.waitForTimeout(1000);
+  // プロンプト入力して生成開始
+  await inputPromptAndCreate(page, videoPrompt, config);
+  console.error('Video generation started...');
+  await page.waitForTimeout(5000);
 
-  // Click create button
-  const createBtn = await findElement(page, SELECTORS.createButton);
-  if (!createBtn) throw new Error('Create button not found');
+  // 動画生成完了を待機
+  const result = await waitForVideoGeneration(page, config);
 
-  for (let i = 0; i < 20; i++) {
-    const disabled = await createBtn.getAttribute('disabled');
-    if (disabled === null) break;
-    await page.waitForTimeout(500);
-  }
+  // 「シーンに追加」ボタンをクリックしてシーンビルダーに移動
+  await clickAddToSceneAndGoToBuilder(page);
 
-  await createBtn.click({ force: true });
-  console.error('Clicked create button');
-  console.error('Extension started...');
-  await page.waitForTimeout(3000);
-
-  // Wait for extension to complete
-  const startTime = Date.now();
-  console.error('Waiting for generation to start (add clip button should disappear)...');
-
-  // Wait for add clip button to become available again (indicates completion)
-  while (Date.now() - startTime < config.waitTimeout) {
-    await page.waitForTimeout(10000);
-    await dismissNotifications(page);
-
-    // Check if add clip button is visible and enabled again
-    const addClipBtnAgain = await page.$(SELECTORS.addClipButton);
-    if (addClipBtnAgain) {
-      const isVisible = await addClipBtnAgain.isVisible();
-      const disabled = await addClipBtnAgain.getAttribute('disabled');
-      if (isVisible && disabled === null) {
-        console.error('  ' + Math.round((Date.now() - startTime) / 1000) + 's elapsed');
-        console.error(`Scene ${sceneIndex} extended!`);
-        return;
-      }
-    }
-  }
-
-  throw new Error(`Scene ${sceneIndex} extension timeout`);
+  return result;
 }
 
 /**
- * Download final video
+ * シーンを拡張（タイムライン右端クリック → 拡張）
+ */
+async function extendWithPrompt(page, config, videoPrompt, index) {
+  console.error(`\n=== Extending Scene ${index} ===`);
+  console.error('Video prompt: ' + videoPrompt.substring(0, 80) + '...');
+
+  // タイムラインの右端をクリック
+  await clickTimelineEnd(page);
+
+  // extendScene関数を使用してシーン拡張
+  const result = await extendScene(page, config, videoPrompt, index);
+
+  return result;
+}
+
+/**
+ * 最終動画をダウンロード
  */
 async function downloadFinalVideo(page, config) {
-  console.error('\n=== Downloading Final Video ===');
+  console.error('\n=== Downloading final video ===');
 
-  // Find video element
-  const videos = await page.$$('video');
-  let videoUrl = null;
+  const tempPath = '/tmp/veo3_character_temp.mp4';
+  let downloadedFile = null;
 
-  for (const video of videos) {
-    const src = await video.getAttribute('src');
-    if (src && src.startsWith('http')) {
-      videoUrl = src;
-    }
+  let downloadBtn = await page.$(SELECTORS.downloadButton);
+  if (!downloadBtn || !(await downloadBtn.isVisible())) {
+    throw new Error('Download button not found or not visible');
   }
 
-  if (!videoUrl) {
-    // Try to click download button
-    const downloadBtn = await findElement(page, SELECTORS.downloadButton);
-    if (downloadBtn) {
-      await downloadBtn.click({ force: true });
-      await page.waitForTimeout(3000);
+  console.error('Clicking download button to open export dialog...');
+  await downloadBtn.click({ force: true });
+  await page.waitForTimeout(3000);
 
-      // Check for video again
-      for (const video of await page.$$('video')) {
-        const src = await video.getAttribute('src');
-        if (src && src.startsWith('http')) {
-          videoUrl = src;
+  console.error('Waiting for export dialog...');
+  let exportDialogFound = false;
+  let downloadLink = null;
+
+  for (let i = 0; i < 30; i++) {
+    downloadLink = await page.$(SELECTORS.exportDownloadLink);
+    if (downloadLink && await downloadLink.isVisible()) {
+      exportDialogFound = true;
+      console.error('Export dialog found after ' + ((i + 1) * 2) + 's');
+      break;
+    }
+
+    const closeBtn = await page.$(SELECTORS.exportCloseButton);
+    if (closeBtn && await closeBtn.isVisible()) {
+      exportDialogFound = true;
+      console.error('Export dialog detected (close button visible) after ' + ((i + 1) * 2) + 's');
+      break;
+    }
+
+    if (i % 5 === 4) {
+      console.error('  Waiting for export dialog... ' + ((i + 1) * 2) + 's');
+    }
+    await page.waitForTimeout(2000);
+  }
+
+  if (!exportDialogFound) {
+    console.error('Export dialog not found, taking screenshot...');
+    await page.screenshot({ path: '/tmp/veo3-character-no-export-dialog.png' });
+  }
+
+  console.error('Waiting for export to complete...');
+  const exportTimeout = Math.max(config.waitTimeout, 600000);
+  const exportStartTime = Date.now();
+  let exportComplete = false;
+
+  while (Date.now() - exportStartTime < exportTimeout) {
+    downloadLink = await page.$(SELECTORS.exportDownloadLink);
+
+    if (downloadLink && await downloadLink.isVisible()) {
+      const href = await downloadLink.getAttribute('href');
+
+      if (href && (href.startsWith('http') || href.startsWith('data:') || href.startsWith('blob:'))) {
+        exportComplete = true;
+        console.error('Export complete! href ready after ' + Math.round((Date.now() - exportStartTime) / 1000) + 's');
+        console.error('  href: ' + href.substring(0, 80) + '...');
+        break;
+      }
+
+      const linkText = await downloadLink.textContent();
+      if (linkText && !linkText.includes('準備') && !linkText.includes('Processing') && !linkText.includes('...')) {
+        const isDisabled = await downloadLink.getAttribute('disabled');
+        const ariaDisabled = await downloadLink.getAttribute('aria-disabled');
+        if (!isDisabled && ariaDisabled !== 'true') {
+          console.error('Download link appears ready (text: ' + linkText + ')');
+          exportComplete = true;
           break;
         }
       }
     }
+
+    const pageText = await page.evaluate(() => document.body.innerText);
+    const hasProgress = pageText.includes('エクスポート中') ||
+                        pageText.includes('Exporting') ||
+                        pageText.includes('Processing') ||
+                        pageText.includes('準備中');
+
+    const elapsed = Math.round((Date.now() - exportStartTime) / 1000);
+    if (elapsed % 30 === 0) {
+      console.error('  Export in progress... ' + elapsed + 's (progress indicator: ' + hasProgress + ')');
+    }
+
+    await page.waitForTimeout(5000);
   }
 
-  if (!videoUrl) {
-    throw new Error('Could not find video URL for download');
+  if (!exportComplete) {
+    console.error('Export may not be complete, but proceeding with download attempt...');
+    await page.screenshot({ path: '/tmp/veo3-character-export-timeout.png' });
   }
 
-  // Download video
-  const tempPath = '/tmp/veo3_character_temp.mp4';
-  await downloadVideo(videoUrl, tempPath);
+  let capturedDownloadUrl = null;
+  page.on('request', request => {
+    const url = request.url();
+    if ((url.includes('storage.googleapis.com') || url.includes('googleusercontent.com')) &&
+        (url.includes('.mp4') || url.includes('video') || url.includes('download'))) {
+      console.error('Captured URL: ' + url.substring(0, 100) + '...');
+      capturedDownloadUrl = url;
+    }
+  });
 
-  // Process with ffmpeg (remove audio if requested)
-  if (config.keepAudio) {
-    execSync(`ffmpeg -y -i "${tempPath}" -c copy "${config.outputPath}"`, { stdio: 'pipe' });
-  } else {
-    execSync(`ffmpeg -y -i "${tempPath}" -an -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
+  // 方法1: hrefから直接取得
+  downloadLink = await page.$(SELECTORS.exportDownloadLink);
+  if (downloadLink && await downloadLink.isVisible()) {
+    const href = await downloadLink.getAttribute('href');
+    console.error('Download link href: ' + (href ? href.substring(0, 80) + '...' : 'null'));
+
+    if (href && href.startsWith('http')) {
+      console.error('Downloading via HTTP URL...');
+      downloadedFile = '/tmp/veo3_character_export_' + Date.now() + '.mp4';
+      try {
+        await downloadFile(href, downloadedFile);
+      } catch (err) {
+        console.error('HTTP download failed: ' + err.message);
+        downloadedFile = null;
+      }
+    }
+
+    if (!downloadedFile && href && href.startsWith('data:')) {
+      console.error('Decoding data URL...');
+      const matches = href.match(/^data:([^;]+);base64,(.+)$/);
+      if (matches) {
+        const buffer = Buffer.from(matches[2], 'base64');
+        downloadedFile = '/tmp/veo3_character_export_' + Date.now() + '.mp4';
+        fs.writeFileSync(downloadedFile, buffer);
+        console.error('Base64 decode: ' + downloadedFile + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
+      }
+    }
+
+    if (!downloadedFile && href && href.startsWith('blob:')) {
+      console.error('Fetching blob URL...');
+      try {
+        const dataUrl = await page.evaluate(async (blobUrl) => {
+          const response = await fetch(blobUrl);
+          const blob = await response.blob();
+          return new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result);
+            reader.readAsDataURL(blob);
+          });
+        }, href);
+
+        if (dataUrl && dataUrl.startsWith('data:')) {
+          const matches = dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+          if (matches) {
+            const buffer = Buffer.from(matches[2], 'base64');
+            downloadedFile = '/tmp/veo3_character_export_' + Date.now() + '.mp4';
+            fs.writeFileSync(downloadedFile, buffer);
+            console.error('Blob fetch successful: ' + downloadedFile + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
+          }
+        }
+      } catch (err) {
+        console.error('Blob fetch failed: ' + err.message);
+      }
+    }
   }
 
-  // Clean up temp file
+  // 方法2: クリックしてイベント待機
+  if (!downloadedFile) {
+    console.error('Trying click download method...');
+    downloadLink = await page.$(SELECTORS.exportDownloadLink);
+
+    if (downloadLink && await downloadLink.isVisible()) {
+      try {
+        const downloadPromise = page.waitForEvent('download', { timeout: 180000 });
+        await downloadLink.evaluate(el => el.click());
+        console.error('Clicked download link, waiting for download event...');
+
+        const download = await downloadPromise;
+        console.error('Download started: ' + download.suggestedFilename());
+
+        const downloadUrl = download.url();
+        console.error('Download URL: ' + (downloadUrl ? downloadUrl.substring(0, 100) + '...' : 'null'));
+
+        if (downloadUrl && downloadUrl.startsWith('data:')) {
+          const matches = downloadUrl.match(/^data:([^;]+);base64,(.+)$/);
+          if (matches) {
+            const buffer = Buffer.from(matches[2], 'base64');
+            downloadedFile = '/tmp/veo3_character_download_' + Date.now() + '.mp4';
+            fs.writeFileSync(downloadedFile, buffer);
+            console.error('Base64 decode successful: ' + downloadedFile + ' (' + (buffer.length / 1024 / 1024).toFixed(2) + 'MB)');
+          }
+        } else if (downloadUrl && downloadUrl.startsWith('http')) {
+          downloadedFile = '/tmp/veo3_character_download_' + Date.now() + '.mp4';
+          await downloadFile(downloadUrl, downloadedFile);
+        } else {
+          downloadedFile = '/tmp/veo3_character_download_' + Date.now() + '.mp4';
+          await download.saveAs(downloadedFile);
+          console.error('Saved via saveAs: ' + downloadedFile);
+        }
+      } catch (err) {
+        console.error('Click download method failed: ' + err.message);
+      }
+    }
+  }
+
+  // 方法3: キャプチャしたURL
+  if (!downloadedFile && capturedDownloadUrl) {
+    console.error('Trying captured URL: ' + capturedDownloadUrl.substring(0, 80) + '...');
+    downloadedFile = '/tmp/veo3_character_captured_' + Date.now() + '.mp4';
+    try {
+      await downloadFile(capturedDownloadUrl, downloadedFile);
+    } catch (err) {
+      console.error('Captured URL download failed: ' + err.message);
+      downloadedFile = null;
+    }
+  }
+
+  // 方法4: Chromeダウンロードフォルダ
+  if (!downloadedFile) {
+    console.error('Trying to find Chrome downloaded file (method 4)...');
+
+    const downloadDirs = [
+      '/mnt/downloads',
+      '/home/node/Downloads'
+    ];
+
+    for (let wait = 0; wait < 30; wait++) {
+      await page.waitForTimeout(2000);
+
+      for (const dir of downloadDirs) {
+        try {
+          const files = fs.readdirSync(dir);
+          const mp4Files = files
+            .filter(f => f.endsWith('.mp4') && (
+              f.includes('flow') ||
+              f.includes('video') ||
+              f.includes('scene') ||
+              f.includes('export') ||
+              /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)_/.test(f)
+            ))
+            .map(f => ({
+              name: f,
+              path: path.join(dir, f),
+              mtime: fs.statSync(path.join(dir, f)).mtime
+            }))
+            .sort((a, b) => b.mtime - a.mtime);
+
+          if (mp4Files.length > 0) {
+            const newest = mp4Files[0];
+            const stats = fs.statSync(newest.path);
+            if (Date.now() - newest.mtime.getTime() < 300000 && stats.size > 100000) {
+              console.error('Found Chrome downloaded file: ' + newest.path + ' (' + (stats.size / 1024 / 1024).toFixed(2) + 'MB)');
+              downloadedFile = newest.path;
+              break;
+            }
+          }
+        } catch (e) {}
+      }
+
+      if (downloadedFile) break;
+
+      if (wait % 10 === 9) {
+        console.error('  Waiting for Chrome download... (' + ((wait + 1) * 2) + 's)');
+      }
+    }
+  }
+
+  if (!downloadedFile || !fs.existsSync(downloadedFile)) {
+    throw new Error('Download failed - no file downloaded');
+  }
+
+  fs.copyFileSync(downloadedFile, tempPath);
+  console.error('Copied to temp: ' + tempPath);
+
+  const audioOption = config.keepAudio ? '-c:a copy' : '-an';
+  console.error('Audio option: ' + (config.keepAudio ? 'keep audio' : 'remove audio'));
+  execSync(`ffmpeg -y -i "${tempPath}" ${audioOption} -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
+
   try { fs.unlinkSync(tempPath); } catch (e) {}
 
   console.error('Output: ' + config.outputPath);
@@ -702,114 +515,139 @@ async function downloadFinalVideo(page, config) {
 }
 
 /**
- * Main entry point
+ * メイン処理
  */
 async function main() {
-  let configPath = process.argv[2];
+  let input = process.argv[2];
   let config = { ...DEFAULT_CONFIG };
 
-  // Load config from file if path provided
-  if (configPath && fs.existsSync(configPath)) {
-    console.error('Read config from file: ' + configPath);
-    const fileContent = fs.readFileSync(configPath, 'utf8');
-    const parsed = JSON.parse(fileContent);
-    config = { ...config, ...parsed };
-  } else if (configPath) {
-    // Try to parse as JSON directly
+  if (input) {
     try {
-      const parsed = JSON.parse(configPath);
-      config = { ...config, ...parsed };
+      if (input.startsWith('/') || input.endsWith('.json')) {
+        if (fs.existsSync(input)) {
+          input = fs.readFileSync(input, 'utf8');
+          console.error('Read config from file: ' + process.argv[2]);
+        }
+      }
+      config = { ...config, ...JSON.parse(input) };
     } catch (e) {
-      console.log(JSON.stringify({ success: false, error: 'Invalid config: ' + e.message }));
+      console.log(JSON.stringify({ error: 'Invalid JSON: ' + e.message }));
       process.exit(1);
     }
   }
 
+  // 必須パラメータチェック
   if (!config.imagePrompt) {
-    console.log(JSON.stringify({ success: false, error: 'imagePrompt is required' }));
+    console.log(JSON.stringify({ error: 'imagePrompt required' }));
     process.exit(1);
   }
 
   if (!config.videoPrompts || config.videoPrompts.length === 0) {
-    console.log(JSON.stringify({ success: false, error: 'At least one videoPrompt is required' }));
+    console.log(JSON.stringify({ error: 'videoPrompts required (array of prompts)' }));
+    process.exit(1);
+  }
+
+  // 空の動画プロンプトをフィルタリング
+  const videoPrompts = config.videoPrompts.filter(p => p && p.trim() !== '');
+  if (videoPrompts.length === 0) {
+    console.log(JSON.stringify({ error: 'At least one non-empty video prompt required' }));
     process.exit(1);
   }
 
   console.error('=== Veo3 Character Video Generation ===');
   console.error('Image prompt: ' + config.imagePrompt.substring(0, 50) + '...');
-  console.error('Video prompts: ' + config.videoPrompts.length + ' scenes');
+  console.error('Video prompts: ' + videoPrompts.length + ' scenes');
   console.error('Style: ' + (config.style || '(default)'));
-  console.error('Movie time: ' + config.movieTime);
+  console.error('Movie time: ' + config.movieTime + 's');
   console.error('Aspect ratio: ' + config.aspectRatio);
-  console.error('Opening: https://labs.google/fx/tools/flow');
 
   let browser, page;
+  const results = [];
+  let totalTime = 0;
   const startTime = Date.now();
 
   try {
-    // Connect to Chrome via CDP
-    browser = await chromium.connectOverCDP('http://192.168.65.254:9222');
+    browser = await chromium.connectOverCDP(config.cdpUrl);
     const context = browser.contexts()[0];
     page = await context.newPage();
 
-    // Start new project
-    await startNewProject(page);
+    // ステップ1: プロジェクト開始
+    await startNewProject(page, config);
 
-    // Generate base image
+    // ステップ2: ベース画像を生成（ダウンロードなし）
     await generateBaseImage(page, config);
+    const imageTime = Math.round((Date.now() - startTime) / 1000);
+    console.error(`Image generation completed in ${imageTime}s`);
+    results.push({ type: 'image', time: imageTime });
 
-    // Generate first video
-    await generateFirstVideo(page, config);
+    // ステップ3: 最初の動画を生成
+    const firstVideoPrompt = videoPrompts[0];
+    const firstVideoResult = await generateFirstVideo(page, config, firstVideoPrompt);
+    results.push({ type: 'video', index: 1, time: firstVideoResult.time });
+    totalTime += firstVideoResult.time;
 
-    // Extend with remaining scenes
-    for (let i = 1; i < config.videoPrompts.length; i++) {
-      await extendScene(page, config, i + 1, config.videoPrompts[i]);
+    // ステップ4: 追加の動画プロンプトでシーンを拡張
+    for (let i = 1; i < videoPrompts.length; i++) {
+      const videoPrompt = videoPrompts[i];
+      const extendResult = await extendWithPrompt(page, config, videoPrompt, i + 1);
+      results.push({ type: 'extension', index: i + 1, time: extendResult.time });
+      totalTime += extendResult.time;
 
-      // Add a small delay between scenes to prevent rate limiting
-      if (i < config.videoPrompts.length - 1) {
-        await page.waitForTimeout(2000);
+      // ===== 改善3: シーン間の待機時間追加 =====
+      if (i < videoPrompts.length - 1) {
+        const delay = config.sceneDelay || 3000;
+        console.error(`Waiting ${delay / 1000}s before next scene...`);
+        await page.waitForTimeout(delay);
       }
     }
 
-    // Get project URL
-    const projectUrl = page.url();
+    // ダウンロードをスキップする場合
+    if (!config.download) {
+      const projectUrl = page.url();
+      console.error('\n=== Skipping download (download: false) ===');
+      console.error('Project URL: ' + projectUrl);
 
-    // Download final video if requested
-    let outputPath = null;
-    if (config.download) {
-      outputPath = await downloadFinalVideo(page, config);
+      await page.close();
+
+      console.log(JSON.stringify({
+        success: true,
+        projectUrl: projectUrl,
+        sceneCount: videoPrompts.length,
+        totalTime: Math.round((Date.now() - startTime) / 1000) + 's',
+        downloaded: false,
+        results: results
+      }));
+      process.exit(0);
     }
 
+    // ステップ5: 最終動画をダウンロード
+    await downloadFinalVideo(page, config);
+
+    const finalProjectUrl = page.url();
     await page.close();
 
-    const totalTime = Math.round((Date.now() - startTime) / 1000);
+    const finalTotalTime = Math.round((Date.now() - startTime) / 1000);
 
     console.log(JSON.stringify({
       success: true,
-      outputPath: outputPath,
-      projectUrl: projectUrl,
-      sceneCount: config.videoPrompts.length,
-      totalTime: totalTime + 's'
+      outputPath: config.outputPath,
+      projectUrl: finalProjectUrl,
+      sceneCount: videoPrompts.length,
+      totalTime: finalTotalTime + 's',
+      downloaded: true,
+      results: results
     }));
     process.exit(0);
 
   } catch (e) {
     console.error('Error: ' + e.message);
-
     if (page) {
       try {
-        const screenshotPath = '/tmp/veo3-character-error.png';
-        await page.screenshot({ path: screenshotPath });
-        console.error('Error screenshot saved: ' + screenshotPath);
+        await page.screenshot({ path: '/tmp/veo3-character-error.png' });
         await page.close();
       } catch (se) {}
     }
-
-    console.log(JSON.stringify({
-      success: false,
-      error: e.message,
-      sceneCount: 0
-    }));
+    console.log(JSON.stringify({ error: e.message }));
     process.exit(1);
   }
 }
