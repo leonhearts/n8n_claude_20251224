@@ -641,14 +641,25 @@ async function extendSceneInternal(page, config, prompt, index) {
   }
 
   while (Date.now() - startTime < config.waitTimeout) {
-    await page.waitForTimeout(10000);
-    console.error(`  ${Math.round((Date.now() - startTime) / 1000)}s elapsed`);
+    // より頻繁にチェック（5秒ごと）
+    await page.waitForTimeout(5000);
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    if (elapsed % 10 === 0) {
+      console.error(`  ${elapsed}s elapsed`);
+    }
 
     await dismissNotifications(page);
 
+    // エラーポップアップを複数の方法でチェック
     const pageText = await page.evaluate(() => document.body.innerText);
-    if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
+    const hasError = pageText.includes('生成できませんでした') ||
+                     pageText.includes('Could not generate') ||
+                     pageText.includes('動画を生成できませんでした') ||
+                     pageText.includes('エラーが発生しました');
+
+    if (hasError) {
       console.error('Generation error detected on page');
+      await page.screenshot({ path: `/tmp/veo3-generation-error-scene${index}.png` });
       throw new Error('RETRY:Scene extension failed: 生成できませんでした');
     }
 
@@ -672,7 +683,10 @@ async function extendSceneInternal(page, config, prompt, index) {
     }
   }
 
-  if (!completed) throw new Error(`Scene ${index} extension timeout`);
+  if (!completed) {
+    await page.screenshot({ path: `/tmp/veo3-timeout-scene${index}.png` });
+    throw new Error('RETRY:Scene extension timeout');
+  }
 
   // 完了後、少し待機して安定させる
   await page.waitForTimeout(2000);
@@ -738,6 +752,16 @@ async function extendScene(page, config, prompt, index) {
 async function clickTimelineEnd(page) {
   console.error('Clicking last clip in timeline...');
 
+  // まずタイムラインコンテナを右端までスクロール
+  const timelineContainer = await page.$('.sc-5367019-1');
+  if (timelineContainer) {
+    await page.evaluate((container) => {
+      container.scrollLeft = container.scrollWidth;
+    }, timelineContainer);
+    console.error('Scrolled timeline to right end');
+    await page.waitForTimeout(500);
+  }
+
   // 全てのクリップサムネイルを取得（sc-624db470-0 クラスを持つ要素）
   const clips = await page.$$(SELECTORS.timelineArea);
 
@@ -758,7 +782,6 @@ async function clickTimelineEnd(page) {
 
   // フォールバック: クリップが見つからない場合は従来の方法
   console.error('No clips found, trying fallback method...');
-  const timelineContainer = await page.$('.sc-5367019-1');
   if (timelineContainer) {
     const box = await timelineContainer.boundingBox();
     if (box) {
