@@ -54,7 +54,7 @@ const DEFAULT_CONFIG = {
   outputPath: '/tmp/veo3_character.mp4',
   movieTime: 15, // 目標動画時間（秒）
   style: '', // スタイル指定（空の場合は元動画参照）
-  aspectRatio: 'portrait', // キャラクター動画は縦向きがデフォルト
+  aspectRatio: 'landscape', // キャラクター動画は横向きがデフォルト
   imageOutputCount: 1,
   sceneDelay: 3000, // 改善3: シーン間の待機時間（ミリ秒）
 };
