@@ -462,10 +462,48 @@ async function generateImage(page, config, options = {}) {
 
 /**
  * プロンプト入力して生成ボタンをクリック
+ * 改善: プロンプト入力の検出にリトライロジック追加
  */
 async function inputPromptAndCreate(page, prompt, config) {
-  const promptInput = await page.waitForSelector(SELECTORS.promptInput, { timeout: 10000 });
-  if (!promptInput) throw new Error('Prompt input not found');
+  // プロンプト入力を探す（リトライ付き）
+  let promptInput = null;
+  const promptSelectors = [
+    SELECTORS.promptInput,
+    '#PINHOLE_TEXT_AREA_ELEMENT_ID',
+    'textarea[placeholder*="プロンプト"]',
+    'textarea[placeholder*="prompt"]',
+    'textarea',
+  ];
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    for (const sel of promptSelectors) {
+      try {
+        promptInput = await page.waitForSelector(sel, { timeout: 3000, state: 'visible' });
+        if (promptInput) {
+          console.error(`Found prompt input with: ${sel}`);
+          break;
+        }
+      } catch (e) {
+        // 次のセレクタを試す
+      }
+    }
+
+    if (promptInput) break;
+
+    console.error(`Prompt input not found, retrying... (${attempt + 1}/5)`);
+    await page.waitForTimeout(2000);
+
+    // UIが読み込み中かもしれないので、ページをスクロールして更新
+    try {
+      await page.keyboard.press('Escape');
+      await page.waitForTimeout(500);
+    } catch (e) {}
+  }
+
+  if (!promptInput) {
+    await page.screenshot({ path: '/tmp/veo3-prompt-input-not-found.png' });
+    throw new Error('RETRY:Prompt input not found after 5 attempts');
+  }
 
   await promptInput.click();
   await promptInput.fill('');
@@ -474,6 +512,21 @@ async function inputPromptAndCreate(page, prompt, config) {
   await page.waitForTimeout(1000);
 
   let createBtn = await findElement(page, SELECTORS.createButton);
+  if (!createBtn) {
+    // 作成ボタンも探す
+    const createSelectors = [
+      'button[aria-label="作成"]',
+      'button[aria-label="Create"]',
+      'button:has(i:text("arrow_forward"))',
+      'button:has-text("作成")',
+      'button:has-text("Create")',
+    ];
+    for (const sel of createSelectors) {
+      createBtn = await page.$(sel);
+      if (createBtn && await createBtn.isVisible()) break;
+    }
+  }
+
   if (!createBtn) throw new Error('Create button not found');
 
   for (let i = 0; i < 20; i++) {
@@ -753,53 +806,148 @@ async function extendScene(page, config, prompt, index) {
 
 /**
  * タイムラインの最後のクリップをクリック
+ * 改善: 複数のスクロール方法を試行、ブラウザズーム対応
  */
 async function clickTimelineEnd(page) {
   console.error('Clicking last clip in timeline...');
 
-  // まずタイムラインコンテナを右端までスクロール
-  const timelineContainer = await page.$('.sc-5367019-1');
+  // タイムラインコンテナを探す（複数のセレクタを試行）
+  const containerSelectors = [
+    '[class*="timeline"] [class*="scroll"]',
+    '[class*="sc-"][class*="timeline"]',
+    '.sc-5367019-1',
+    '[data-testid*="timeline"]',
+  ];
+
+  let timelineContainer = null;
+  for (const sel of containerSelectors) {
+    timelineContainer = await page.$(sel);
+    if (timelineContainer) {
+      console.error(`Found timeline container with: ${sel}`);
+      break;
+    }
+  }
+
+  // まずタイムラインコンテナを右端までスクロール（複数の方法を試行）
   if (timelineContainer) {
-    await page.evaluate((container) => {
-      container.scrollLeft = container.scrollWidth;
-    }, timelineContainer);
-    console.error('Scrolled timeline to right end');
+    // 方法1: scrollLeft
+    try {
+      await page.evaluate((container) => {
+        container.scrollLeft = container.scrollWidth;
+      }, timelineContainer);
+      console.error('Scroll method 1: scrollLeft executed');
+    } catch (e) {
+      console.error('Scroll method 1 failed: ' + e.message);
+    }
+
+    await page.waitForTimeout(300);
+
+    // 方法2: scrollIntoView + End key
+    try {
+      await page.keyboard.press('End');
+      console.error('Scroll method 2: End key pressed');
+    } catch (e) {
+      console.error('Scroll method 2 failed: ' + e.message);
+    }
+
     await page.waitForTimeout(500);
   }
 
-  // 全てのクリップサムネイルを取得（sc-624db470-0 クラスを持つ要素）
-  const clips = await page.$$(SELECTORS.timelineArea);
+  // 全てのクリップサムネイルを取得（複数のセレクタを試行）
+  const clipSelectors = [
+    SELECTORS.timelineArea,
+    '[class*="sc-624db470"]',
+    '[class*="timeline"] [class*="clip"]',
+    '[class*="thumbnail"]',
+  ];
+
+  let clips = [];
+  for (const sel of clipSelectors) {
+    clips = await page.$$(sel);
+    if (clips.length > 0) {
+      console.error(`Found ${clips.length} clips with: ${sel}`);
+      break;
+    }
+  }
 
   if (clips.length > 0) {
     const lastClip = clips[clips.length - 1];
-    console.error(`Found ${clips.length} clips, clicking the last one...`);
+    console.error(`Clicking last clip (index ${clips.length - 1})...`);
 
-    // スクロールして表示（長い動画の場合に対応）
-    await lastClip.scrollIntoViewIfNeeded();
+    // 方法1: scrollIntoViewIfNeeded
+    try {
+      await lastClip.scrollIntoViewIfNeeded();
+      console.error('Scrolled last clip into view');
+    } catch (e) {
+      console.error('scrollIntoViewIfNeeded failed: ' + e.message);
+    }
     await page.waitForTimeout(500);
 
-    // 最後のクリップをクリック
-    await lastClip.click({ force: true });
-    console.error('Clicked last clip in timeline');
+    // 方法2: evaluate でスクロール
+    try {
+      await page.evaluate((el) => {
+        el.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'end' });
+      }, lastClip);
+      console.error('Scroll via evaluate executed');
+    } catch (e) {
+      console.error('Scroll via evaluate failed: ' + e.message);
+    }
+    await page.waitForTimeout(500);
+
+    // クリップをクリック
+    try {
+      await lastClip.click({ force: true });
+      console.error('Clicked last clip in timeline');
+    } catch (e) {
+      // クリックが失敗したら座標でクリック
+      console.error('Direct click failed, trying coordinate click: ' + e.message);
+      const box = await lastClip.boundingBox();
+      if (box) {
+        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+        console.error('Clicked via coordinates');
+      }
+    }
+
     await page.waitForTimeout(1000);
     return true;
   }
 
-  // フォールバック: クリップが見つからない場合は従来の方法
-  console.error('No clips found, trying fallback method...');
-  if (timelineContainer) {
-    const box = await timelineContainer.boundingBox();
-    if (box) {
-      const clickX = box.x + box.width * 0.9;
-      const clickY = box.y + box.height / 2;
-      await page.mouse.click(clickX, clickY);
-      console.error('Clicked timeline at right end (fallback)');
-      await page.waitForTimeout(1000);
-      return true;
-    }
+  // フォールバック: ページ全体でスクロール可能な要素を探す
+  console.error('No clips found, trying fallback scroll method...');
+
+  try {
+    // タイムライン領域を探して右端をクリック
+    const scrollResult = await page.evaluate(() => {
+      // overflow-x: auto/scroll を持つ要素を探す
+      const allElements = document.querySelectorAll('*');
+      for (const el of allElements) {
+        const style = window.getComputedStyle(el);
+        if ((style.overflowX === 'auto' || style.overflowX === 'scroll') &&
+            el.scrollWidth > el.clientWidth) {
+          el.scrollLeft = el.scrollWidth;
+          return { found: true, scrollWidth: el.scrollWidth };
+        }
+      }
+      return { found: false };
+    });
+    console.error('Fallback scroll result: ' + JSON.stringify(scrollResult));
+  } catch (e) {
+    console.error('Fallback scroll failed: ' + e.message);
   }
 
-  console.error('Timeline area not found');
+  await page.waitForTimeout(500);
+
+  // 最後のクリップを再度探す
+  clips = await page.$$(SELECTORS.timelineArea);
+  if (clips.length > 0) {
+    const lastClip = clips[clips.length - 1];
+    await lastClip.click({ force: true });
+    console.error('Clicked last clip after fallback scroll');
+    await page.waitForTimeout(1000);
+    return true;
+  }
+
+  console.error('Timeline clips not found after all attempts');
   return false;
 }
 
