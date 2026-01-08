@@ -754,12 +754,13 @@ async function extendSceneInternal(page, config, prompt, index) {
 
 /**
  * シーン拡張（リトライ機能付き）
+ * 高速化: リトライ回数2回、待機時間短縮
  */
 async function extendScene(page, config, prompt, index) {
   console.error(`\n=== Extending Scene ${index} ===`);
 
-  const maxRetries = config.maxRetries || 3;
-  const retryDelay = config.retryDelay || 10000;
+  const maxRetries = config.maxRetries || 2;  // 3→2に短縮
+  const retryDelay = config.retryDelay || 3000;  // 10000→3000に短縮
   let lastError = null;
 
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
@@ -770,7 +771,7 @@ async function extendScene(page, config, prompt, index) {
         const baseProjectUrl = projectUrl.replace(/\/scenes\/.*$/, '');
         console.error('Reloading project page: ' + baseProjectUrl);
         await page.goto(baseProjectUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
-        await page.waitForTimeout(5000);
+        await page.waitForTimeout(3000);  // 5000→3000に短縮
         await dismissNotifications(page);
         await dismissConsentPopup(page);
 
@@ -778,12 +779,12 @@ async function extendScene(page, config, prompt, index) {
         if (scenebuilderBtn && await scenebuilderBtn.isVisible()) {
           await scenebuilderBtn.click();
           console.error('Clicked Scenebuilder tab');
-          await page.waitForTimeout(3000);
+          await page.waitForTimeout(2000);  // 3000→2000に短縮
         }
 
         // 重要: リトライ時は最後のクリップをクリックしてから拡張する
         console.error('Clicking last clip before retry...');
-        await page.waitForTimeout(2000); // クリップが読み込まれるまで待機
+        await page.waitForTimeout(1000);  // 2000→1000に短縮
         await clickTimelineEnd(page);
       }
 
@@ -811,159 +812,38 @@ async function extendScene(page, config, prompt, index) {
 
 /**
  * タイムラインの最後のクリップをクリック
- * 改善: 複数のスクロール方法を試行、ブラウザズーム対応
+ * シンプル版: DOM順序で最後の .sc-624db470-0 要素をクリック
  */
 async function clickTimelineEnd(page) {
   console.error('Clicking last clip in timeline...');
 
-  // タイムラインコンテナを探す（複数のセレクタを試行）
-  const containerSelectors = [
-    '[class*="timeline"] [class*="scroll"]',
-    '[class*="sc-"][class*="timeline"]',
-    '.sc-5367019-1',
-    '[data-testid*="timeline"]',
-  ];
+  // クリップを取得（HTMLで確認した正確なセレクタ）
+  const clips = await page.$$('.sc-624db470-0');
 
-  let timelineContainer = null;
-  for (const sel of containerSelectors) {
-    timelineContainer = await page.$(sel);
-    if (timelineContainer) {
-      console.error(`Found timeline container with: ${sel}`);
-      break;
-    }
+  if (clips.length === 0) {
+    console.error('No clips found with .sc-624db470-0');
+    return false;
   }
 
-  // まずタイムラインコンテナを右端までスクロール（複数の方法を試行）
-  if (timelineContainer) {
-    // 方法1: scrollLeft
-    try {
-      await page.evaluate((container) => {
-        container.scrollLeft = container.scrollWidth;
-      }, timelineContainer);
-      console.error('Scroll method 1: scrollLeft executed');
-    } catch (e) {
-      console.error('Scroll method 1 failed: ' + e.message);
-    }
+  console.error(`Found ${clips.length} clips`);
 
-    await page.waitForTimeout(300);
+  // 最後のクリップを取得
+  const lastClip = clips[clips.length - 1];
 
-    // 方法2: scrollIntoView + End key
-    try {
-      await page.keyboard.press('End');
-      console.error('Scroll method 2: End key pressed');
-    } catch (e) {
-      console.error('Scroll method 2 failed: ' + e.message);
-    }
-
-    await page.waitForTimeout(500);
-  }
-
-  // 全てのクリップサムネイルを取得（複数のセレクタを試行）
-  const clipSelectors = [
-    SELECTORS.timelineArea,
-    '[class*="sc-624db470"]',
-    '[class*="timeline"] [class*="clip"]',
-    '[class*="thumbnail"]',
-  ];
-
-  let clips = [];
-  for (const sel of clipSelectors) {
-    clips = await page.$$(sel);
-    if (clips.length > 0) {
-      console.error(`Found ${clips.length} clips with: ${sel}`);
-      break;
-    }
-  }
-
-  if (clips.length > 0) {
-    // X座標で最も右にあるクリップを探す（DOM順序ではなく視覚的な位置で判断）
-    let rightmostClip = null;
-    let maxX = -Infinity;
-
-    for (const clip of clips) {
-      try {
-        const box = await clip.boundingBox();
-        if (box && box.x > maxX) {
-          maxX = box.x;
-          rightmostClip = clip;
-        }
-      } catch (e) {
-        // このクリップはスキップ
-      }
-    }
-
-    if (!rightmostClip) {
-      rightmostClip = clips[clips.length - 1];
-      console.error('Fallback to last clip in array');
-    }
-
-    console.error(`Found ${clips.length} clips, clicking rightmost (x=${maxX})...`);
-
-    // スクロールして表示
-    try {
-      await rightmostClip.scrollIntoViewIfNeeded();
-      console.error('Scrolled rightmost clip into view');
-    } catch (e) {
-      console.error('scrollIntoViewIfNeeded failed: ' + e.message);
-    }
-    await page.waitForTimeout(500);
-
-    // クリップをクリック（座標ベースで確実に）
-    try {
-      const box = await rightmostClip.boundingBox();
-      if (box) {
-        await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-        console.error(`Clicked rightmost clip at (${box.x + box.width / 2}, ${box.y + box.height / 2})`);
-      } else {
-        await rightmostClip.click({ force: true });
-        console.error('Clicked via element click');
-      }
-    } catch (e) {
-      console.error('Click failed: ' + e.message);
-      await rightmostClip.click({ force: true });
-    }
-
-    await page.waitForTimeout(1000);
-    return true;
-  }
-
-  // フォールバック: ページ全体でスクロール可能な要素を探す
-  console.error('No clips found, trying fallback scroll method...');
-
+  // スクロールして表示
   try {
-    // タイムライン領域を探して右端をクリック
-    const scrollResult = await page.evaluate(() => {
-      // overflow-x: auto/scroll を持つ要素を探す
-      const allElements = document.querySelectorAll('*');
-      for (const el of allElements) {
-        const style = window.getComputedStyle(el);
-        if ((style.overflowX === 'auto' || style.overflowX === 'scroll') &&
-            el.scrollWidth > el.clientWidth) {
-          el.scrollLeft = el.scrollWidth;
-          return { found: true, scrollWidth: el.scrollWidth };
-        }
-      }
-      return { found: false };
-    });
-    console.error('Fallback scroll result: ' + JSON.stringify(scrollResult));
+    await lastClip.scrollIntoViewIfNeeded();
   } catch (e) {
-    console.error('Fallback scroll failed: ' + e.message);
+    console.error('scrollIntoViewIfNeeded failed: ' + e.message);
   }
+  await page.waitForTimeout(300);
+
+  // クリック
+  await lastClip.click({ force: true });
+  console.error(`Clicked clip ${clips.length} of ${clips.length}`);
 
   await page.waitForTimeout(500);
-
-  // 最後のクリップを再度探す
-  clips = await page.$$(SELECTORS.timelineArea);
-  if (clips.length > 0) {
-    const lastClip = clips[clips.length - 1];
-    await lastClip.click({ force: true });
-    console.error('Clicked last clip after fallback scroll');
-    await page.waitForTimeout(1000);
-    return true;
-  }
-
-  console.error('Timeline clips not found after all attempts');
-  return false;
+  return true;
 }
 
 /**
