@@ -553,9 +553,16 @@ async function clickAddToSceneAndGoToBuilder(page) {
 /**
  * シーン拡張の内部処理（拡張ボタンクリック→プロンプト入力→生成→待機）
  * 改善1: メニュー選択にリトライロジック追加、タイムアウト延長
+ * 改善2: クリップ数でより確実に完了を検出
  */
 async function extendSceneInternal(page, config, prompt, index) {
   await dismissNotifications(page);
+
+  // 現在のクリップ数をカウント（完了検出用）
+  const initialClips = await page.$$(SELECTORS.timelineArea);
+  const initialClipCount = initialClips.length;
+  console.error(`Current clip count: ${initialClipCount}`);
+
   console.error('Waiting for add clip button to be enabled...');
 
   for (let i = 0; i < 30; i++) {
@@ -645,15 +652,30 @@ async function extendSceneInternal(page, config, prompt, index) {
       throw new Error('RETRY:Scene extension failed: 生成できませんでした');
     }
 
+    // 改善2: クリップ数の増加で完了を検出
+    const currentClips = await page.$$(SELECTORS.timelineArea);
+    const currentClipCount = currentClips.length;
+
     const addBtnAgain = await page.$(SELECTORS.addClipButton);
-    if (addBtnAgain && await addBtnAgain.isVisible()) {
+    const buttonVisible = addBtnAgain && await addBtnAgain.isVisible();
+
+    // クリップが増えていて、かつボタンが表示されていれば完了
+    if (currentClipCount > initialClipCount && buttonVisible) {
       completed = true;
-      console.error(`Scene ${index} extended!`);
+      console.error(`Scene ${index} extended! (clips: ${initialClipCount} -> ${currentClipCount})`);
       break;
+    }
+
+    // クリップは増えたがボタンがまだ非表示の場合は待機を継続
+    if (currentClipCount > initialClipCount) {
+      console.error(`  Clip added (${currentClipCount}), waiting for button to be ready...`);
     }
   }
 
   if (!completed) throw new Error(`Scene ${index} extension timeout`);
+
+  // 完了後、少し待機して安定させる
+  await page.waitForTimeout(2000);
 
   return { success: true, time: Math.round((Date.now() - startTime) / 1000) };
 }
@@ -711,20 +733,39 @@ async function extendScene(page, config, prompt, index) {
 }
 
 /**
- * タイムラインの右端をクリック
+ * タイムラインの最後のクリップをクリック
  */
 async function clickTimelineEnd(page) {
-  console.error('Clicking timeline end...');
+  console.error('Clicking last clip in timeline...');
 
-  const timelineArea = await page.$(SELECTORS.timelineArea);
-  if (timelineArea) {
-    const box = await timelineArea.boundingBox();
+  // 全てのクリップサムネイルを取得（sc-624db470-0 クラスを持つ要素）
+  const clips = await page.$$(SELECTORS.timelineArea);
+
+  if (clips.length > 0) {
+    const lastClip = clips[clips.length - 1];
+    console.error(`Found ${clips.length} clips, clicking the last one...`);
+
+    // スクロールして表示（長い動画の場合に対応）
+    await lastClip.scrollIntoViewIfNeeded();
+    await page.waitForTimeout(500);
+
+    // 最後のクリップをクリック
+    await lastClip.click({ force: true });
+    console.error('Clicked last clip in timeline');
+    await page.waitForTimeout(1000);
+    return true;
+  }
+
+  // フォールバック: クリップが見つからない場合は従来の方法
+  console.error('No clips found, trying fallback method...');
+  const timelineContainer = await page.$('.sc-5367019-1');
+  if (timelineContainer) {
+    const box = await timelineContainer.boundingBox();
     if (box) {
-      // 右端付近をクリック（右から10%の位置）
       const clickX = box.x + box.width * 0.9;
       const clickY = box.y + box.height / 2;
       await page.mouse.click(clickX, clickY);
-      console.error('Clicked timeline at right end');
+      console.error('Clicked timeline at right end (fallback)');
       await page.waitForTimeout(1000);
       return true;
     }
