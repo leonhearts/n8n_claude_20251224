@@ -44,3 +44,24 @@
 - コード変更前に必ず現状を確認する
 - 勝手に新ファイルを作らず、既存ファイルの修正を優先
 - 大きな変更は先に提案して承認を得る
+
+## よく使うコマンド（毎回完全な形で出力すること）
+
+スクリプト修正後は以下のコマンドを省略せずに提示する：
+
+### Gitからプル（ローカルPC）
+```powershell
+git pull origin main
+```
+
+### Dockerコンテナへコピー（ローカルPC）
+```powershell
+# veo3-character-video.js
+docker cp C:\script_all\n8n_claude_20251224\scripts\veo3-character-video.js n8n-n8n-1:/home/node/veo3-character-video.js
+
+# veo3-common.js
+docker cp C:\script_all\n8n_claude_20251224\scripts\veo3-common.js n8n-n8n-1:/home/node/veo3-common.js
+
+# veo3-shorts-simple.js
+docker cp C:\script_all\n8n_claude_20251224\scripts\veo3-shorts-simple.js n8n-n8n-1:/home/node/veo3-shorts-simple.js
+```
