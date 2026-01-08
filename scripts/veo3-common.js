@@ -498,16 +498,22 @@ async function waitForVideoGeneration(page, config) {
 
     await dismissNotifications(page);
 
-    const pageText = await page.evaluate(() => document.body.innerText);
-    if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
-      console.error('Generation error detected on page');
-      throw new Error('RETRY:Video generation failed: 生成できませんでした');
-    }
-
+    // まず成功をチェック（成功していればエラーチェックは不要）
     const addToSceneBtn = await page.$(SELECTORS.addToSceneButton);
     if (addToSceneBtn && await addToSceneBtn.isVisible()) {
       console.error('Video generated! Found "Add to Scene" button');
       return { success: true, time: Math.round((Date.now() - startTime) / 1000) };
+    }
+
+    // 成功していない場合のみエラーをチェック
+    // より限定的なエラー検出：ダイアログやアラート要素を探す
+    const errorDialog = await page.$('[role="alertdialog"], [role="alert"], .error-message');
+    if (errorDialog && await errorDialog.isVisible()) {
+      const errorText = await errorDialog.textContent();
+      if (errorText && (errorText.includes('生成できませんでした') || errorText.includes('Could not generate'))) {
+        console.error('Generation error detected in dialog: ' + errorText.substring(0, 100));
+        throw new Error('RETRY:Video generation failed: 生成できませんでした');
+      }
     }
   }
 
@@ -650,20 +656,7 @@ async function extendSceneInternal(page, config, prompt, index) {
 
     await dismissNotifications(page);
 
-    // エラーポップアップを複数の方法でチェック
-    const pageText = await page.evaluate(() => document.body.innerText);
-    const hasError = pageText.includes('生成できませんでした') ||
-                     pageText.includes('Could not generate') ||
-                     pageText.includes('動画を生成できませんでした') ||
-                     pageText.includes('エラーが発生しました');
-
-    if (hasError) {
-      console.error('Generation error detected on page');
-      await page.screenshot({ path: `/tmp/veo3-generation-error-scene${index}.png` });
-      throw new Error('RETRY:Scene extension failed: 生成できませんでした');
-    }
-
-    // 改善2: クリップ数の増加で完了を検出
+    // まず成功をチェック（クリップ数の増加で完了を検出）
     const currentClips = await page.$$(SELECTORS.timelineArea);
     const currentClipCount = currentClips.length;
 
@@ -680,6 +673,18 @@ async function extendSceneInternal(page, config, prompt, index) {
     // クリップは増えたがボタンがまだ非表示の場合は待機を継続
     if (currentClipCount > initialClipCount) {
       console.error(`  Clip added (${currentClipCount}), waiting for button to be ready...`);
+      continue; // 成功途中なのでエラーチェックはスキップ
+    }
+
+    // 成功していない場合のみエラーをチェック（ダイアログ要素を探す）
+    const errorDialog = await page.$('[role="alertdialog"], [role="alert"], .error-message, [data-testid*="error"]');
+    if (errorDialog && await errorDialog.isVisible()) {
+      const errorText = await errorDialog.textContent();
+      if (errorText && (errorText.includes('生成できませんでした') || errorText.includes('Could not generate'))) {
+        console.error('Generation error detected in dialog: ' + errorText.substring(0, 100));
+        await page.screenshot({ path: `/tmp/veo3-generation-error-scene${index}.png` });
+        throw new Error('RETRY:Scene extension failed: 生成できませんでした');
+      }
     }
   }
 
