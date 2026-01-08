@@ -876,41 +876,51 @@ async function clickTimelineEnd(page) {
   }
 
   if (clips.length > 0) {
-    const lastClip = clips[clips.length - 1];
-    console.error(`Clicking last clip (index ${clips.length - 1})...`);
+    // X座標で最も右にあるクリップを探す（DOM順序ではなく視覚的な位置で判断）
+    let rightmostClip = null;
+    let maxX = -Infinity;
 
-    // 方法1: scrollIntoViewIfNeeded
+    for (const clip of clips) {
+      try {
+        const box = await clip.boundingBox();
+        if (box && box.x > maxX) {
+          maxX = box.x;
+          rightmostClip = clip;
+        }
+      } catch (e) {
+        // このクリップはスキップ
+      }
+    }
+
+    if (!rightmostClip) {
+      rightmostClip = clips[clips.length - 1];
+      console.error('Fallback to last clip in array');
+    }
+
+    console.error(`Found ${clips.length} clips, clicking rightmost (x=${maxX})...`);
+
+    // スクロールして表示
     try {
-      await lastClip.scrollIntoViewIfNeeded();
-      console.error('Scrolled last clip into view');
+      await rightmostClip.scrollIntoViewIfNeeded();
+      console.error('Scrolled rightmost clip into view');
     } catch (e) {
       console.error('scrollIntoViewIfNeeded failed: ' + e.message);
     }
     await page.waitForTimeout(500);
 
-    // 方法2: evaluate でスクロール
+    // クリップをクリック（座標ベースで確実に）
     try {
-      await page.evaluate((el) => {
-        el.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'end' });
-      }, lastClip);
-      console.error('Scroll via evaluate executed');
-    } catch (e) {
-      console.error('Scroll via evaluate failed: ' + e.message);
-    }
-    await page.waitForTimeout(500);
-
-    // クリップをクリック
-    try {
-      await lastClip.click({ force: true });
-      console.error('Clicked last clip in timeline');
-    } catch (e) {
-      // クリックが失敗したら座標でクリック
-      console.error('Direct click failed, trying coordinate click: ' + e.message);
-      const box = await lastClip.boundingBox();
+      const box = await rightmostClip.boundingBox();
       if (box) {
         await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
-        console.error('Clicked via coordinates');
+        console.error(`Clicked rightmost clip at (${box.x + box.width / 2}, ${box.y + box.height / 2})`);
+      } else {
+        await rightmostClip.click({ force: true });
+        console.error('Clicked via element click');
       }
+    } catch (e) {
+      console.error('Click failed: ' + e.message);
+      await rightmostClip.click({ force: true });
     }
 
     await page.waitForTimeout(1000);
