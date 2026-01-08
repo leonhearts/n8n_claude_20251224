@@ -27,7 +27,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Build prompt for Gemini - Multi-Scene Video Generator\nconst row = $input.first().json;\nconst youtubeUrl = row.search_url;\nconst search_keyword = row.search_keyword;\nconst style = row.style || '廃墟・心霊スポット探訪ドキュメンタリー風';\nconst movie_time = row.movie_time || 64;\nconst row_number = row.row_number; // row_number を取得\n\nconst fullPrompt = `# 廃墟・心霊スポット探訪動画 マルチシーンプロンプト生成システム\n\n## 役割と目標 (Role and Goal)\nあなたは、YouTube動画を解析し、生成AI（Veo, Runway, Luma等）で廃墟や心霊スポットの探訪動画を再現するための「シーンアーキテクト」です。マルチシーン構成で、指定された秒数を1秒も欠かすことなく、シーンを連続的に繋げていきます。\n\n## 必須入力項目\n* 参考URL: ${youtubeUrl}\n* キーワード/場所: ${search_keyword}\n* スタイル: ${style}\n* 動画時間: ${movie_time}秒\n\n秒数が記載されていない場合は、元参考動画と同じ秒数で考えること。\n\n## 行動とルール\n### 1. 完遂ロジック\n* セグメント計算: 1セグメントを8秒固定とし、総尺 ÷ 8 で算出される全てのセグメントを必ずJSON配列内に出力してください。\n* ストーリーの完結: 指定された最終秒数に向けて、探訪開始から終了までのストーリー構成を均等に割り振ってください。\n\n### 2. プロンプト構築の絶対ルール\n* Master Image Prompt: 動画の始点となる最高密度の静止画プロンプト\n* Scene Builder Segments: 連続動画指示（動作・流動性・カメラワーク）\n* 共通ベーススタイルを全プロンプトの冒頭に結合\n\n### 3. スタイル要素\n* 廃墟・心霊スポットの雰囲気: 不気味さ、静寂、時の流れを感じさせる\n* カメラワーク: POV（一人称視点）、ゆっくりとしたパン、ドローン空撮風\n* 照明: 自然光、懐中電灯、薄暗い雰囲気\n* 音響を意識した映像構成\n\n### 4. 出力形式\n以下のJSON形式のみで出力してください：\n\n\\`\\`\\`json\n{\n  \"project\": {\n    \"subject\": \"場所名・テーマ\",\n    \"worldview_design\": \"デザインコンセプト\",\n    \"totalDuration\": \"〇〇秒\",\n    \"loopCount\": \"Nセグメント\"\n  },\n  \"common_base_style\": {\n    \"text\": \"Style: Atmospheric documentary footage, eerie abandoned location, cinematic drone and POV shots, natural lighting with shadows, 4K quality, film grain, desaturated colors with occasional warm tones.\"\n  },\n  \"master_image\": {\n    \"image_prompt1\": \"[共通スタイル] + 詳細な静止画プロンプト\"\n  },\n  \"scene_builder_segments\": [\n    {\n      \"index\": 1,\n      \"timeRange\": \"00:00 - 00:08\",\n      \"intent\": \"演出意図（日本語）\",\n      \"video_prompt1\": \"[共通スタイル] + 詳細な動画プロンプト. 8 seconds.\"\n    }\n  ]\n}\n\\`\\`\\`\n\n重要: JSON形式のみで出力し、前後に説明文を付けないでください。`;\n\n// 2つ目のプロンプト: 全プラットフォーム用タイトル・概要欄の生成\nconst snsPrompt = `先ほど分析した動画の内容に基づいて、各SNSプラットフォーム用の魅力的なタイトルと概要欄を日本語で作成してください。\n\n## 制約\n元動画と同一の内容にならないように表現を最大限魅力的にズラすこと。\n廃墟・心霊スポット探訪の魅力を伝えることが目的です。\n場所名やスポット名もタイトルに含めること。\n\n## 各プラットフォームの要件\n\n### YouTube（通常動画）\n- タイトル: 60文字以内、SEOを意識、興味を引く表現\n- 概要欄: ハッシュタグ含む、1000文字程度。チャプター出力は不要。\n\n### YouTube Shorts\n- タイトル: 40文字以内、インパクト重視、絵文字OK\n- 概要欄: ハッシュタグ含む、500文字程度\n\n### Twitter/X\n- 投稿文: 140文字以内、ハッシュタグ2-3個含む\n\n### TikTok\n- タイトル: 50文字以内、キャッチー、絵文字推奨\n- 概要欄: ハッシュタグ5-10個、300文字程度\n\n### Instagram\n- タイトル: 最初の1行で注目を引く（30文字以内）\n- 概要欄: ハッシュタグ20-30個、500文字程度、改行多め\n\n## 出力形式\n必ず以下のJSON形式で出力してください:\n\n\\`\\`\\`json\n{\n  \"youtube_title\": \"YouTube通常動画タイトル\",\n  \"youtube_description\": \"YouTube通常動画の概要欄\",\n  \"youtube_title_short\": \"YouTubeショートタイトル\",\n  \"youtube_description_short\": \"YouTubeショート概要欄\",\n  \"twitter_text\": \"Twitter投稿文\",\n  \"tiktok_title\": \"TikTokタイトル\",\n  \"tiktok_description\": \"TikTok概要欄\",\n  \"instagram_title\": \"Instagramタイトル\",\n  \"instagram_description\": \"Instagram概要欄\"\n}\n\\`\\`\\`\n\n重要: 必ずJSON形式のみで出力し、前後に説明文を付けないでください。`;\n\n// row_number を含めて返す\nreturn [{\n  json: {\n    row_number: row_number,\n    search_url: youtubeUrl,\n    prompts: [\n      { index: 1, text: fullPrompt, mode: 'fast' },\n      { index: 2, text: snsPrompt, mode: 'think' }\n    ]\n  }\n}];"
+        "jsCode": "// Build prompt for Gemini - Multi-Scene Video Generator\nconst row = $input.first().json;\nconst youtubeUrl = row.search_url;\nconst style = row.style || '';\nconst movie_time = row.movie_time || '';\nconst row_number = row.row_number; // row_number を取得\n\nconst systemPrompt = `## 役割と目標 (Role and Goal)\nあなたは、YouTube動画内の空間や建造物を**「建築学的・美術的」に解析**し、生成AI（Midjourney + Veo 3/Sora 2）で**オリジナルを完全に再現**するためのプロンプトセットを作成するエキスパートです。\n単に「古い建物」と書くのではなく、**「それが何であるか（固有名詞）」**を特定し、**「どのような素材・形状で構成されているか（マテリアル・ジオメトリ）」**を言語化することで、画像の再現性を極限まで高めます。\n動画は**8秒単位**で分割し、各セクションに対して「ベース画像」と「動画」の1対1ペアを出力します。\n\n## 入力 (Input)\n* **必須:** YouTube動画のURL\n* **世界観:** 元動画と同じ世界観で再現\n${style ? '* **スタイル:** ' + style : ''}\n${movie_time ? '* **動画時間:** ' + movie_time + '秒' : ''}\n\n## 行動とルール (Actions and Rules)\n\n### 1. 対象の特定と構造解析 (Identification & Structural Analysis)\n動画を解析する際、以下の要素を必ず特定・言語化してください。これが再現性の鍵となります。\n* **固有名詞の特定:** それが有名な場所や建造物であれば、必ず**英語の正式名称**を使用する（例: \"It's a Small World facade\", \"Shibuya Crossing\", \"The Empire State Building\"）。\n* **様式とアーティスト:** 特定の建築様式（Gothic, Brutalist）や、関連するアーティスト/スタイル（e.g., Mary Blair style, Ghibli style）があれば記述する。\n* **形状と素材（Geometry & Material）:** 漠然とした描写を避け、物理的な構成要素を書く（例: \"geometric blocks and triangles\", \"red brick texture\", \"reflective glass panels\", \"concrete pillars\"）。\n* **状態（Condition）:** 経年変化や汚れを書く（例: \"peeling paint\", \"moss growing\", \"rusty metal\"）。\n\n### 2. 1対1ペアリング生成 (1:1 Pairing Strategy)\n総再生時間をカバーするまで、8秒ごとに以下のペアを出力します（最大16セグメント）。\n\n* **Step A: ベース画像プロンプト (Base Image Prompt)**\n    * **最重要:** ここで「固有名詞」「形状」「素材」「状態」をすべて詰め込み、オリジナルの見た目を確定させます。\n* **Step B: 動画生成プロンプト (Video Prompt)**\n    * Step Aの画像を「入力（First Frame）」と仮定し、そこからの**動き（Motion）**のみを記述します。\n\n## 出力形式 (Output Format)\n必ず以下のJSON形式で出力してください。他の形式は受け付けません。\n\n\\`\\`\\`json\n{\n  \"project\": {\n    \"subject\": \"特定した固有名詞・場所名\",\n    \"components\": \"主要な素材や形状のキーワード\",\n    \"duration\": \"総尺（例: 1:30）\"\n  },\n  \"segments\": [\n    {\n      \"index\": 1,\n      \"timeRange\": \"00:00 - 00:08\",\n      \"intent\": \"このシーンの意図（日本語）\",\n      \"imagePrompt\": \"A realistic photo of [Subject Name]. Structure made of [Material A] and [Shape B]. [Condition description]. [Lighting].\",\n      \"videoPrompt\": \"[Global Style], Start from the provided image. [Detailed Motion Description].\"\n    }\n  ]\n}\n\\`\\`\\`\n\n重要: 必ずJSON形式のみで出力し、前後に説明文を付けないでください。`;\n\nconst fullPrompt = `${systemPrompt}\\n\\n---\\n\\n以下の動画を分析してください:\\n${youtubeUrl}`;\n\n// 2つ目のプロンプト: 全プラットフォーム用タイトル・概要欄の生成（思考モード）\nconst snsPrompt = `先ほど分析した動画の内容に基づいて、各SNSプラットフォーム用の魅力的なタイトルと概要欄を日本語で作成してください。\n\n## 制約\n元動画と同一の内容にならないように表現を最大限魅力的かつミステリアスにズラすこと。\n100年後などの年数指定は行わず、視聴者の想像を掻き立てる表現にすること。\n\n## 各プラットフォームの要件\n\n### YouTube（通常動画）\n- タイトル: 60文字以内、SEOを意識、興味を引く表現\n- 概要欄: ハッシュタグ含む、1000文字程度。チャプター出力は不要。チャプターは絶対に出力しないこと。\n\n### YouTube Shorts\n- タイトル: 40文字以内、インパクト重視、絵文字OK\n- 概要欄: ハッシュタグ含む、500文字程度\n\n### Twitter/X\n- 投稿文: 140文字以内、ハッシュタグ2-3個含む\n\n### TikTok\n- タイトル: 50文字以内、キャッチー、絵文字推奨\n- 概要欄: ハッシュタグ5-10個、300文字程度\n\n### Instagram\n- タイトル: 最初の1行で注目を引く（30文字以内）\n- 概要欄: ハッシュタグ20-30個、500文字程度、改行多め\n\n## 出力形式\n必ず以下のJSON形式で出力してください:\n\n\\`\\`\\`json\n{\n  \"youtube_title\": \"YouTube通常動画タイトル\",\n  \"youtube_description\": \"YouTube通常動画の概要欄\",\n  \"youtube_title_short\": \"YouTubeショートタイトル\",\n  \"youtube_description_short\": \"YouTubeショート概要欄\",\n  \"twitter_text\": \"Twitter投稿文\",\n  \"tiktok_title\": \"TikTokタイトル\",\n  \"tiktok_description\": \"TikTok概要欄\",\n  \"instagram_title\": \"Instagramタイトル\",\n  \"instagram_description\": \"Instagram概要欄\"\n}\n\\`\\`\\`\n\n重要: 必ずJSON形式のみで出力し、前後に説明文を付けないでください。`;\n\n// row_number を含めて返す\nreturn [{\n  json: {\n    row_number: row_number,\n    search_url: youtubeUrl,\n    prompts: [\n      { index: 1, text: fullPrompt, mode: 'fast' },\n      { index: 2, text: snsPrompt, mode: 'think' }\n    ]\n  }\n}];"
       },
       "id": "dd0ccb58-7baa-4461-964f-2ec14f4bc24a",
       "name": "Build Prompt",
@@ -84,7 +84,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// Parse Gemini browser response\nconst output = $input.first().json.stdout;\n\nlet wrapper;\ntry {\n  wrapper = JSON.parse(output);\n} catch (e) {\n  throw new Error('Failed to parse wrapper: ' + (output ? output.substring(0, 500) : 'empty output'));\n}\n\nconst rowNumber = wrapper.row_number;\nconst result = wrapper.gemini_result || {};\n\nif (!rowNumber) {\n  throw new Error('row_number is missing');\n}\n\nif (result.error && !result.result_p1) {\n  throw new Error('Gemini error: ' + result.error);\n}\n\nfunction repairJson(str) {\n  if (!str) return str;\n  return str.replace(/,\\s*([}\\]])/g, '$1').replace(/[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]/g, '');\n}\n\nfunction safeJsonParse(str) {\n  try { return JSON.parse(str); } catch (e) { return JSON.parse(repairJson(str)); }\n}\n\nfunction extractJsonObject(str) {\n  const firstBrace = str.indexOf('{');\n  if (firstBrace === -1) return null;\n  let braceCount = 0, endIndex = -1, inString = false, escape = false;\n  for (let i = firstBrace; i < str.length; i++) {\n    const char = str[i];\n    if (escape) { escape = false; continue; }\n    if (char === '\\\\') { escape = true; continue; }\n    if (char === '\"') { inString = !inString; continue; }\n    if (!inString) {\n      if (char === '{') braceCount++;\n      if (char === '}') braceCount--;\n      if (braceCount === 0) { endIndex = i + 1; break; }\n    }\n  }\n  return endIndex > 0 ? str.substring(firstBrace, endIndex) : null;\n}\n\nfunction cleanGeminiResponse(text) {\n  let jsonStr = text.replace(/^thought\\s*\\n*/i, '').replace(/^JSON\\s*\\n*/i, '');\n  const match = jsonStr.match(/```(?:json)?\\n?([\\s\\S]*?)\\n?```/);\n  if (match) jsonStr = match[1];\n  return extractJsonObject(jsonStr.trim()) || jsonStr.trim();\n}\n\nconst responseText = result.result_p1 || '';\nif (!responseText || responseText.includes('(Error') || responseText.includes('(timeout)')) {\n  throw new Error('Gemini response invalid: ' + (responseText ? responseText.substring(0, 200) : 'empty'));\n}\n\nlet parsed;\ntry {\n  parsed = safeJsonParse(cleanGeminiResponse(responseText));\n} catch (e) {\n  throw new Error('Failed to parse JSON: ' + e.message);\n}\n\nlet snsData = { youtube_title: '', youtube_description: '', youtube_title_short: '', youtube_description_short: '', twitter_text: '', tiktok_title: '', tiktok_description: '', instagram_title: '', instagram_description: '' };\n\nconst responseText2 = result.result_p2 || '';\nif (responseText2 && !responseText2.includes('(Error') && !responseText2.includes('(timeout)')) {\n  try {\n    const parsed2 = safeJsonParse(cleanGeminiResponse(responseText2));\n    Object.assign(snsData, parsed2);\n  } catch (e) {}\n}\n\nconst segments = parsed.scene_builder_segments || [];\nconst outputData = {\n  row_number: rowNumber,\n  project: parsed.project,\n  segmentCount: segments.length,\n  ...snsData\n};\n\nif (parsed.master_image?.image_prompt1) outputData.image_prompt1 = parsed.master_image.image_prompt1;\n\nsegments.forEach((seg, idx) => {\n  const num = seg.index || (idx + 1);\n  if (num <= 24 && seg['video_prompt' + num]) outputData['video_prompt' + num] = seg['video_prompt' + num];\n});\n\nfor (let i = 2; i <= 24; i++) if (!outputData['image_prompt' + i]) outputData['image_prompt' + i] = '';\nfor (let i = 1; i <= 24; i++) if (!outputData['video_prompt' + i]) outputData['video_prompt' + i] = '';\n\nreturn [{ json: outputData }];"
+        "jsCode": "// Parse Gemini browser response\nconst output = $input.first().json.stdout;\n\nlet wrapper;\ntry {\n  wrapper = JSON.parse(output);\n} catch (e) {\n  throw new Error('Failed to parse wrapper: ' + (output ? output.substring(0, 500) : 'empty output'));\n}\n\nconst rowNumber = wrapper.row_number;\nconst result = wrapper.gemini_result || {};\n\nif (!rowNumber) {\n  throw new Error('row_number is missing');\n}\n\nif (result.error && !result.result_p1) {\n  throw new Error('Gemini error: ' + result.error);\n}\n\nfunction repairJson(str) {\n  if (!str) return str;\n  return str.replace(/,\\s*([}\\]])/g, '$1').replace(/[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F\\x7F]/g, '');\n}\n\nfunction safeJsonParse(str) {\n  try { return JSON.parse(str); } catch (e) { return JSON.parse(repairJson(str)); }\n}\n\nfunction extractJsonObject(str) {\n  const firstBrace = str.indexOf('{');\n  if (firstBrace === -1) return null;\n  let braceCount = 0, endIndex = -1, inString = false, escape = false;\n  for (let i = firstBrace; i < str.length; i++) {\n    const char = str[i];\n    if (escape) { escape = false; continue; }\n    if (char === '\\\\') { escape = true; continue; }\n    if (char === '\"') { inString = !inString; continue; }\n    if (!inString) {\n      if (char === '{') braceCount++;\n      if (char === '}') braceCount--;\n      if (braceCount === 0) { endIndex = i + 1; break; }\n    }\n  }\n  return endIndex > 0 ? str.substring(firstBrace, endIndex) : null;\n}\n\nfunction cleanGeminiResponse(text) {\n  let jsonStr = text.replace(/^thought\\s*\\n*/i, '').replace(/^JSON\\s*\\n*/i, '');\n  const match = jsonStr.match(/```(?:json)?\\n?([\\s\\S]*?)\\n?```/);\n  if (match) jsonStr = match[1];\n  return extractJsonObject(jsonStr.trim()) || jsonStr.trim();\n}\n\nconst responseText = result.result_p1 || '';\nif (!responseText || responseText.includes('(Error') || responseText.includes('(timeout)')) {\n  throw new Error('Gemini response invalid: ' + (responseText ? responseText.substring(0, 200) : 'empty'));\n}\n\nlet parsed;\ntry {\n  parsed = safeJsonParse(cleanGeminiResponse(responseText));\n} catch (e) {\n  throw new Error('Failed to parse JSON: ' + e.message);\n}\n\nlet snsData = { youtube_title: '', youtube_description: '', youtube_title_short: '', youtube_description_short: '', twitter_text: '', tiktok_title: '', tiktok_description: '', instagram_title: '', instagram_description: '' };\n\nconst responseText2 = result.result_p2 || '';\nif (responseText2 && !responseText2.includes('(Error') && !responseText2.includes('(timeout)')) {\n  try {\n    const parsed2 = safeJsonParse(cleanGeminiResponse(responseText2));\n    Object.assign(snsData, parsed2);\n  } catch (e) {}\n}\n\n// New format: segments with imagePrompt and videoPrompt\nconst segments = parsed.segments || [];\nconst outputData = {\n  row_number: rowNumber,\n  project: parsed.project,\n  segmentCount: segments.length,\n  ...snsData\n};\n\n// Extract imagePrompt and videoPrompt from segments\nsegments.forEach((seg, idx) => {\n  const num = seg.index || (idx + 1);\n  if (num <= 16) {\n    if (seg.imagePrompt) outputData['image_prompt' + num] = seg.imagePrompt;\n    if (seg.videoPrompt) outputData['video_prompt' + num] = seg.videoPrompt;\n  }\n});\n\n// Fill empty prompts\nfor (let i = 1; i <= 16; i++) {\n  if (!outputData['image_prompt' + i]) outputData['image_prompt' + i] = '';\n  if (!outputData['video_prompt' + i]) outputData['video_prompt' + i] = '';\n}\n\nreturn [{ json: outputData }];"
       },
       "id": "7b5ba2fa-aab4-4869-b083-9dcf9f4c4532",
       "name": "Parse Gemini Response",
@@ -128,6 +128,21 @@
             "instagram_title": "={{ $json.instagram_title }}",
             "instagram_description": "={{ $json.instagram_description }}",
             "image_prompt1": "={{ $json.image_prompt1 }}",
+            "image_prompt2": "={{ $json.image_prompt2 }}",
+            "image_prompt3": "={{ $json.image_prompt3 }}",
+            "image_prompt4": "={{ $json.image_prompt4 }}",
+            "image_prompt5": "={{ $json.image_prompt5 }}",
+            "image_prompt6": "={{ $json.image_prompt6 }}",
+            "image_prompt7": "={{ $json.image_prompt7 }}",
+            "image_prompt8": "={{ $json.image_prompt8 }}",
+            "image_prompt9": "={{ $json.image_prompt9 }}",
+            "image_prompt10": "={{ $json.image_prompt10 }}",
+            "image_prompt11": "={{ $json.image_prompt11 }}",
+            "image_prompt12": "={{ $json.image_prompt12 }}",
+            "image_prompt13": "={{ $json.image_prompt13 }}",
+            "image_prompt14": "={{ $json.image_prompt14 }}",
+            "image_prompt15": "={{ $json.image_prompt15 }}",
+            "image_prompt16": "={{ $json.image_prompt16 }}",
             "video_prompt1": "={{ $json.video_prompt1 }}",
             "video_prompt2": "={{ $json.video_prompt2 }}",
             "video_prompt3": "={{ $json.video_prompt3 }}",
@@ -143,344 +158,55 @@
             "video_prompt13": "={{ $json.video_prompt13 }}",
             "video_prompt14": "={{ $json.video_prompt14 }}",
             "video_prompt15": "={{ $json.video_prompt15 }}",
-            "video_prompt16": "={{ $json.video_prompt16 }}",
-            "video_prompt17": "={{ $json.video_prompt17 }}",
-            "video_prompt18": "={{ $json.video_prompt18 }}",
-            "video_prompt19": "={{ $json.video_prompt19 }}",
-            "video_prompt20": "={{ $json.video_prompt20 }}",
-            "video_prompt21": "={{ $json.video_prompt21 }}",
-            "video_prompt22": "={{ $json.video_prompt22 }}",
-            "video_prompt23": "={{ $json.video_prompt23 }}",
-            "video_prompt24": "={{ $json.video_prompt24 }}"
+            "video_prompt16": "={{ $json.video_prompt16 }}"
           },
           "matchingColumns": [
             "row_number"
           ],
           "schema": [
-            {
-              "id": "row_number",
-              "displayName": "row_number",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "number",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "status",
-              "displayName": "status",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "youtube_title",
-              "displayName": "youtube_title",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "youtube_description",
-              "displayName": "youtube_description",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "youtube_title_short",
-              "displayName": "youtube_title_short",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "youtube_description_short",
-              "displayName": "youtube_description_short",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "twitter_text",
-              "displayName": "twitter_text",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "tiktok_title",
-              "displayName": "tiktok_title",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "tiktok_description",
-              "displayName": "tiktok_description",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "instagram_title",
-              "displayName": "instagram_title",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "instagram_description",
-              "displayName": "instagram_description",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "image_prompt1",
-              "displayName": "image_prompt1",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt1",
-              "displayName": "video_prompt1",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt2",
-              "displayName": "video_prompt2",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt3",
-              "displayName": "video_prompt3",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt4",
-              "displayName": "video_prompt4",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt5",
-              "displayName": "video_prompt5",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt6",
-              "displayName": "video_prompt6",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt7",
-              "displayName": "video_prompt7",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt8",
-              "displayName": "video_prompt8",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt9",
-              "displayName": "video_prompt9",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt10",
-              "displayName": "video_prompt10",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt11",
-              "displayName": "video_prompt11",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt12",
-              "displayName": "video_prompt12",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt13",
-              "displayName": "video_prompt13",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt14",
-              "displayName": "video_prompt14",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt15",
-              "displayName": "video_prompt15",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt16",
-              "displayName": "video_prompt16",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt17",
-              "displayName": "video_prompt17",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt18",
-              "displayName": "video_prompt18",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt19",
-              "displayName": "video_prompt19",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt20",
-              "displayName": "video_prompt20",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt21",
-              "displayName": "video_prompt21",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt22",
-              "displayName": "video_prompt22",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt23",
-              "displayName": "video_prompt23",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            },
-            {
-              "id": "video_prompt24",
-              "displayName": "video_prompt24",
-              "required": false,
-              "defaultMatch": false,
-              "display": true,
-              "type": "string",
-              "canBeUsedToMatch": true
-            }
+            { "id": "row_number", "displayName": "row_number", "required": false, "defaultMatch": false, "display": true, "type": "number", "canBeUsedToMatch": true },
+            { "id": "status", "displayName": "status", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "youtube_title", "displayName": "youtube_title", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "youtube_description", "displayName": "youtube_description", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "youtube_title_short", "displayName": "youtube_title_short", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "youtube_description_short", "displayName": "youtube_description_short", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "twitter_text", "displayName": "twitter_text", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "tiktok_title", "displayName": "tiktok_title", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "tiktok_description", "displayName": "tiktok_description", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "instagram_title", "displayName": "instagram_title", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "instagram_description", "displayName": "instagram_description", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt1", "displayName": "image_prompt1", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt2", "displayName": "image_prompt2", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt3", "displayName": "image_prompt3", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt4", "displayName": "image_prompt4", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt5", "displayName": "image_prompt5", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt6", "displayName": "image_prompt6", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt7", "displayName": "image_prompt7", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt8", "displayName": "image_prompt8", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt9", "displayName": "image_prompt9", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt10", "displayName": "image_prompt10", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt11", "displayName": "image_prompt11", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt12", "displayName": "image_prompt12", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt13", "displayName": "image_prompt13", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt14", "displayName": "image_prompt14", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt15", "displayName": "image_prompt15", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "image_prompt16", "displayName": "image_prompt16", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt1", "displayName": "video_prompt1", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt2", "displayName": "video_prompt2", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt3", "displayName": "video_prompt3", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt4", "displayName": "video_prompt4", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt5", "displayName": "video_prompt5", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt6", "displayName": "video_prompt6", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt7", "displayName": "video_prompt7", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt8", "displayName": "video_prompt8", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt9", "displayName": "video_prompt9", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt10", "displayName": "video_prompt10", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt11", "displayName": "video_prompt11", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt12", "displayName": "video_prompt12", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt13", "displayName": "video_prompt13", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt14", "displayName": "video_prompt14", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt15", "displayName": "video_prompt15", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true },
+            { "id": "video_prompt16", "displayName": "video_prompt16", "required": false, "defaultMatch": false, "display": true, "type": "string", "canBeUsedToMatch": true }
           ],
           "attemptToConvertTypes": false,
           "convertFieldsToString": false
