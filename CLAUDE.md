@@ -65,3 +65,12 @@ docker cp C:\script_all\n8n_claude_20251224\scripts\veo3-common.js n8n-n8n-1:/ho
 # veo3-shorts-simple.js
 docker cp C:\script_all\n8n_claude_20251224\scripts\veo3-shorts-simple.js n8n-n8n-1:/home/node/veo3-shorts-simple.js
 ```
+
+### コンテナ内で直接編集する場合
+```bash
+# ファイルを開く
+vi /home/node/veo3-common.js
+
+# 編集後、保存して終了
+:wq
+```
