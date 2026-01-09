@@ -662,13 +662,25 @@ async function waitForVideoInTimeline(page, config) {
  */
 async function clickAddToSceneAndGoToBuilder(page) {
   const addToSceneBtn = await page.$(SELECTORS.addToSceneButton);
-  if (addToSceneBtn && await addToSceneBtn.isVisible()) {
+  let addToSceneBtnVisible = false;
+  try {
+    addToSceneBtnVisible = addToSceneBtn && await addToSceneBtn.isVisible();
+  } catch (e) {
+    console.error('isVisible check failed: ' + e.message);
+  }
+
+  if (addToSceneBtnVisible) {
     await addToSceneBtn.click({ force: true });
     console.error('Clicked Add to Scene button');
     await page.waitForTimeout(3000);
 
     const scenebuilderBtn = await page.$(SELECTORS.scenebuilderTab);
-    if (scenebuilderBtn && await scenebuilderBtn.isVisible()) {
+    let scenebuilderBtnVisible = false;
+    try {
+      scenebuilderBtnVisible = scenebuilderBtn && await scenebuilderBtn.isVisible();
+    } catch (e) {}
+
+    if (scenebuilderBtnVisible) {
       await scenebuilderBtn.click();
       console.error('Clicked Scenebuilder tab');
       await page.waitForTimeout(2000);
@@ -678,16 +690,29 @@ async function clickAddToSceneAndGoToBuilder(page) {
     console.error('Waiting for scene builder...');
     for (let i = 0; i < 30; i++) {
       await page.waitForTimeout(2000);
-      const addClipBtn = await page.$(SELECTORS.addClipButton);
-      if (addClipBtn && await addClipBtn.isVisible()) {
-        const isDisabled = await addClipBtn.getAttribute('disabled');
-        if (isDisabled === null) {
-          console.error('Scene builder loaded and button enabled');
-          break;
+      try {
+        const addClipBtn = await page.$(SELECTORS.addClipButton);
+        if (addClipBtn) {
+          let isVisible = false;
+          try {
+            isVisible = await addClipBtn.isVisible();
+          } catch (e) {}
+
+          if (isVisible) {
+            const isDisabled = await addClipBtn.getAttribute('disabled');
+            if (isDisabled === null) {
+              console.error('Scene builder loaded and button enabled');
+              break;
+            }
+            console.error(`  Waiting for add clip button to be enabled... ${i * 2}s`);
+          } else {
+            console.error(`  Waiting for add clip button... ${i * 2}s`);
+          }
+        } else {
+          console.error(`  Waiting for add clip button... ${i * 2}s`);
         }
-        console.error(`  Waiting for add clip button to be enabled... ${i * 2}s`);
-      } else {
-        console.error(`  Waiting for add clip button... ${i * 2}s`);
+      } catch (e) {
+        console.error(`  Error checking button: ${e.message}`);
       }
     }
   }
@@ -710,14 +735,25 @@ async function extendSceneInternal(page, config, prompt, index) {
 
   for (let i = 0; i < 30; i++) {
     await page.waitForTimeout(2000);
-    const addClipBtn = await page.$(SELECTORS.addClipButton);
-    if (addClipBtn && await addClipBtn.isVisible()) {
-      const isDisabled = await addClipBtn.getAttribute('disabled');
-      if (isDisabled === null) {
-        console.error('Add clip button is enabled');
-        break;
+    try {
+      const addClipBtn = await page.$(SELECTORS.addClipButton);
+      if (addClipBtn) {
+        let isVisible = false;
+        try {
+          isVisible = await addClipBtn.isVisible();
+        } catch (e) {}
+
+        if (isVisible) {
+          const isDisabled = await addClipBtn.getAttribute('disabled');
+          if (isDisabled === null) {
+            console.error('Add clip button is enabled');
+            break;
+          }
+          console.error(`  Button still disabled... ${i * 2}s`);
+        }
       }
-      console.error(`  Button still disabled... ${i * 2}s`);
+    } catch (e) {
+      console.error(`  Error checking button: ${e.message}`);
     }
   }
 
@@ -776,11 +812,17 @@ async function extendSceneInternal(page, config, prompt, index) {
   console.error('Waiting for generation to start (add clip button should disappear)...');
   for (let i = 0; i < 30; i++) {
     await page.waitForTimeout(2000);
-    const addBtnCheck = await page.$(SELECTORS.addClipButton);
-    if (!addBtnCheck || !(await addBtnCheck.isVisible())) {
-      console.error('Add clip button disappeared, generation in progress...');
-      break;
-    }
+    try {
+      const addBtnCheck = await page.$(SELECTORS.addClipButton);
+      let isVisible = false;
+      try {
+        isVisible = addBtnCheck && await addBtnCheck.isVisible();
+      } catch (e) {}
+      if (!isVisible) {
+        console.error('Add clip button disappeared, generation in progress...');
+        break;
+      }
+    } catch (e) {}
   }
 
   while (Date.now() - startTime < config.waitTimeout) {
@@ -798,7 +840,10 @@ async function extendSceneInternal(page, config, prompt, index) {
     const currentClipCount = currentClips.length;
 
     const addBtnAgain = await page.$(SELECTORS.addClipButton);
-    const buttonVisible = addBtnAgain && await addBtnAgain.isVisible();
+    let buttonVisible = false;
+    try {
+      buttonVisible = addBtnAgain && await addBtnAgain.isVisible();
+    } catch (e) {}
 
     // クリップが増えていて、かつボタンが表示されていれば完了
     if (currentClipCount > initialClipCount && buttonVisible) {
@@ -814,14 +859,22 @@ async function extendSceneInternal(page, config, prompt, index) {
     }
 
     // 成功していない場合のみエラーをチェック（ダイアログ要素を探す）
-    const errorDialog = await page.$('[role="alertdialog"], [role="alert"], .error-message, [data-testid*="error"]');
-    if (errorDialog && await errorDialog.isVisible()) {
-      const errorText = await errorDialog.textContent();
-      if (errorText && (errorText.includes('生成できませんでした') || errorText.includes('Could not generate'))) {
-        console.error('Generation error detected in dialog: ' + errorText.substring(0, 100));
-        await page.screenshot({ path: `/tmp/veo3-generation-error-scene${index}.png` });
-        throw new Error('RETRY:Scene extension failed: 生成できませんでした');
+    try {
+      const errorDialog = await page.$('[role="alertdialog"], [role="alert"], .error-message, [data-testid*="error"]');
+      let errorVisible = false;
+      try {
+        errorVisible = errorDialog && await errorDialog.isVisible();
+      } catch (e) {}
+      if (errorVisible) {
+        const errorText = await errorDialog.textContent();
+        if (errorText && (errorText.includes('生成できませんでした') || errorText.includes('Could not generate'))) {
+          console.error('Generation error detected in dialog: ' + errorText.substring(0, 100));
+          await page.screenshot({ path: `/tmp/veo3-generation-error-scene${index}.png` });
+          throw new Error('RETRY:Scene extension failed: 生成できませんでした');
+        }
       }
+    } catch (e) {
+      if (e.message.includes('RETRY:')) throw e;
     }
   }
 
