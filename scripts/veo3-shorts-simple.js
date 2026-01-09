@@ -746,7 +746,12 @@ async function main() {
         try {
           if (attempt > 1) {
             console.error(`\n=== Retry attempt ${attempt}/${maxRetries} for Image Generation ===`);
-            const projectUrl = config.projectUrl || page.url();
+            let projectUrl = config.projectUrl || page.url();
+            // SceneBuilder URLをプロジェクトURLに変換
+            if (projectUrl.includes('/scenes/')) {
+              projectUrl = projectUrl.replace(/\/scenes\/.*$/, '');
+              console.error('Converted SceneBuilder URL to project URL: ' + projectUrl);
+            }
             console.error('Reloading project page: ' + projectUrl);
             await page.goto(projectUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
             await page.waitForTimeout(5000);
