@@ -737,11 +737,51 @@ async function main() {
 
     // 画像生成モードの場合
     if (config.mode === 'image') {
-      await startNewProject(page, config);
-      await generateImage(page, config);
-      const outputPath = await downloadGeneratedImage(page, config);
-      const projectUrl = page.url();
+      const maxRetries = config.maxRetries || 3;
+      const retryDelay = config.retryDelay || 10000;
+      let lastError = null;
+      let outputPath = null;
 
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+          if (attempt > 1) {
+            console.error(`\n=== Retry attempt ${attempt}/${maxRetries} for Image Generation ===`);
+            const projectUrl = config.projectUrl || page.url();
+            console.error('Reloading project page: ' + projectUrl);
+            await page.goto(projectUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+            await page.waitForTimeout(5000);
+            await dismissNotifications(page);
+            await dismissConsentPopup(page);
+          } else {
+            await startNewProject(page, config);
+          }
+
+          await generateImage(page, config);
+          outputPath = await downloadGeneratedImage(page, config);
+          break; // 成功したらループを抜ける
+
+        } catch (e) {
+          lastError = e;
+          const isRetryable = e.message.includes('RETRY:') ||
+                              e.message.includes('生成できませんでした') ||
+                              e.message.includes('Could not generate') ||
+                              e.message.includes('Image generation failed');
+
+          if (isRetryable && attempt < maxRetries) {
+            console.error(`Image generation failed (attempt ${attempt}/${maxRetries}): ${e.message}`);
+            console.error(`Waiting ${retryDelay / 1000}s before retry...`);
+            await page.waitForTimeout(retryDelay);
+          } else {
+            throw new Error(e.message.replace('RETRY:', ''));
+          }
+        }
+      }
+
+      if (!outputPath) {
+        throw lastError || new Error('Image generation failed after all retries');
+      }
+
+      const projectUrl = page.url();
       totalTime = Math.round((Date.now() - startTime) / 1000);
       console.log(JSON.stringify({
         success: true,
