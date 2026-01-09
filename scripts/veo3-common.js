@@ -369,7 +369,7 @@ async function generateImage(page, config, options = {}) {
   const promptInput = await page.waitForSelector(SELECTORS.promptInput, { timeout: 10000 });
   if (!promptInput) throw new Error('Prompt input not found');
 
-  await promptInput.click();
+  await promptInput.click({ force: true });
   await promptInput.fill('');
   await page.waitForTimeout(300);
   await promptInput.fill(config.prompt || config.imagePrompt);
@@ -505,7 +505,7 @@ async function inputPromptAndCreate(page, prompt, config) {
     throw new Error('RETRY:Prompt input not found after 5 attempts');
   }
 
-  await promptInput.click();
+  await promptInput.click({ force: true });
   await promptInput.fill('');
   await page.waitForTimeout(300);
   await promptInput.fill(prompt);
