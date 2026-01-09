@@ -574,6 +574,90 @@ async function waitForVideoGeneration(page, config) {
 }
 
 /**
+ * タイムライン内で動画生成完了を待機（マルチシーンワークフロー用）
+ * 「シーンに追加」ボタンではなく、video要素のURLまたはクリップ数の増加で検出
+ */
+async function waitForVideoInTimeline(page, config) {
+  const startTime = Date.now();
+
+  // 初期状態を記録
+  const initialClips = await page.$$(SELECTORS.timelineArea);
+  const initialClipCount = initialClips.length;
+  console.error(`Initial clip count: ${initialClipCount}`);
+
+  // 初期のvideo要素のsrcを記録
+  const initialVideoSrcs = new Set();
+  const initialVideos = await page.$$(SELECTORS.videoElement);
+  for (const video of initialVideos) {
+    const src = await video.getAttribute('src');
+    if (src) initialVideoSrcs.add(src);
+  }
+  console.error(`Initial video count: ${initialVideoSrcs.size}`);
+
+  while (Date.now() - startTime < config.waitTimeout) {
+    await page.waitForTimeout(5000);  // 5秒ごとにチェック
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    if (elapsed % 10 === 0) {
+      console.error(`  ${elapsed}s elapsed`);
+    }
+
+    await dismissNotifications(page);
+
+    // 方法1: クリップ数の増加をチェック
+    const currentClips = await page.$$(SELECTORS.timelineArea);
+    const currentClipCount = currentClips.length;
+
+    if (currentClipCount > initialClipCount) {
+      console.error(`Video generated! Clip count increased: ${initialClipCount} -> ${currentClipCount}`);
+      return { success: true, time: elapsed };
+    }
+
+    // 方法2: 新しいvideo要素のURLをチェック
+    const currentVideos = await page.$$(SELECTORS.videoElement);
+    for (const video of currentVideos) {
+      const src = await video.getAttribute('src');
+      if (src && src.startsWith('http') && !initialVideoSrcs.has(src)) {
+        console.error(`Video generated! New video URL detected`);
+        return { success: true, time: elapsed, videoUrl: src };
+      }
+    }
+
+    // 方法3: プラスボタン（add clip button）が再表示されたかチェック
+    // これは生成完了後に表示される
+    if (elapsed > 30) {  // 最初の30秒はスキップ（生成開始前にボタンが見える可能性があるため）
+      const addClipBtn = await page.$(SELECTORS.addClipButton);
+      if (addClipBtn && await addClipBtn.isVisible()) {
+        const isDisabled = await addClipBtn.getAttribute('disabled');
+        if (isDisabled === null) {
+          // ボタンが有効で、かつvideo要素がある場合は完了とみなす
+          const videos = await page.$$(SELECTORS.videoElement);
+          if (videos.length > 0) {
+            const lastVideo = videos[videos.length - 1];
+            const src = await lastVideo.getAttribute('src');
+            if (src && src.startsWith('http')) {
+              console.error(`Video generated! Add clip button is visible and enabled`);
+              return { success: true, time: elapsed, videoUrl: src };
+            }
+          }
+        }
+      }
+    }
+
+    // エラーチェック
+    const errorDialog = await page.$('[role="alertdialog"], [role="alert"], .error-message');
+    if (errorDialog && await errorDialog.isVisible()) {
+      const errorText = await errorDialog.textContent();
+      if (errorText && (errorText.includes('生成できませんでした') || errorText.includes('Could not generate'))) {
+        console.error('Generation error detected: ' + errorText.substring(0, 100));
+        throw new Error('RETRY:Video generation failed: 生成できませんでした');
+      }
+    }
+  }
+
+  throw new Error('Video generation timed out');
+}
+
+/**
  * 「シーンに追加」ボタンをクリックしてシーンビルダーに移動
  */
 async function clickAddToSceneAndGoToBuilder(page) {
@@ -968,6 +1052,7 @@ module.exports = {
   generateImage,
   inputPromptAndCreate,
   waitForVideoGeneration,
+  waitForVideoInTimeline,
   clickAddToSceneAndGoToBuilder,
   extendSceneInternal,
   extendScene,
