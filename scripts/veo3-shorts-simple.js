@@ -2,62 +2,154 @@
  * Veo3 ショート動画生成（シンプル版）
  *
  * 既存のSUNOワークフローに組み込むための最小限のスクリプト
- * ジャケット画像から動画を生成
- *
- * モード:
- * - image: 画像から動画を生成（新規プロジェクト）
- * - frame: フレームから動画を生成（既存プロジェクトのタイムラインに追加）
+ * ジャケット画像から2つの動画を生成し、結合して出力
  *
  * 使用方法:
- * node veo3-shorts-simple.js '{"prompt": "プロンプト", "imagePath": "/tmp/output.png"}'
- * node veo3-shorts-simple.js '{"prompt": "プロンプト", "projectUrl": "https://...", "mode": "frame"}'
+ * node veo3-shorts-simple.js '{"prompt": "プロンプト", "imagePath": "/tmp/output_kaeuta.png"}'
  *
  * 出力: /tmp/veo3_shorts_kaeuta.mp4
  */
 
 const { chromium } = require('playwright');
 const fs = require('fs');
+const path = require('path');
+const https = require('https');
+const http = require('http');
 const { execSync } = require('child_process');
-
-// 共通モジュールをインポート
-const common = require('./veo3-common.js');
 
 // デフォルト設定
 const DEFAULT_CONFIG = {
   prompt: '',
   imagePath: '/tmp/output_kaeuta.png',
   outputPath: '/tmp/veo3_shorts_kaeuta.mp4',
-  mode: 'image', // 'image' または 'frame'
-  projectUrl: null,
+  mode: 'image', // 'image' または 'text'
   videoCount: 2,
   waitTimeout: 600000,
-  download: true,
-  keepAudio: false,
 };
 
 // セレクタ
 const SELECTORS = {
-  ...common.SELECTORS,
+  promptInput: '#PINHOLE_TEXT_AREA_ELEMENT_ID',
+  createButton: [
+    'button[aria-label="作成"]',
+    'button:has(i:text("arrow_forward"))',
+  ],
+  videoElement: 'video',
+  newProjectButton: [
+    'button:has-text("新しいプロジェクト")',
+    'button:has(i:text("add_2"))',
+  ],
   modeSelector: 'button[role="combobox"]',
   imageToVideoOption: 'text=画像から動画',
   fileInput: 'input[type="file"]',
+  // シーン拡張用セレクタ
+  addClipButton: '#PINHOLE_ADD_CLIP_CARD_ID',
+  extendOption: '[role="menuitem"]:has-text("拡張")',
+  downloadButton: 'button:has(i:text("download"))',
 };
 
 /**
- * Image-to-Videoモードを選択して画像アップロード
+ * 動画をダウンロード
+ */
+async function downloadVideo(url, outputPath) {
+  return new Promise((resolve, reject) => {
+    const protocol = url.startsWith('https') ? https : http;
+    const file = fs.createWriteStream(outputPath);
+
+    console.error('Downloading: ' + outputPath);
+
+    protocol.get(url, (response) => {
+      if (response.statusCode === 301 || response.statusCode === 302) {
+        downloadVideo(response.headers.location, outputPath).then(resolve).catch(reject);
+        return;
+      }
+      if (response.statusCode !== 200) {
+        reject(new Error('Download failed: ' + response.statusCode));
+        return;
+      }
+      response.pipe(file);
+      file.on('finish', () => {
+        file.close();
+        console.error('Downloaded: ' + outputPath);
+        resolve(outputPath);
+      });
+    }).on('error', reject);
+  });
+}
+
+/**
+ * 通知を閉じる
+ */
+async function dismissNotifications(page) {
+  try {
+    const items = await page.$$('[data-radix-collection-item]');
+    for (const item of items) {
+      const box = await item.boundingBox();
+      if (box) {
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(box.x + box.width + 100, box.y + box.height / 2, { steps: 5 });
+        await page.mouse.up();
+        await page.waitForTimeout(200);
+      }
+    }
+  } catch (e) {}
+}
+
+/**
+ * 要素を探す
+ */
+async function findElement(page, selectors) {
+  const list = Array.isArray(selectors) ? selectors : [selectors];
+  for (const sel of list) {
+    try {
+      const el = await page.$(sel);
+      if (el && await el.isVisible()) return el;
+    } catch (e) {}
+  }
+  return null;
+}
+
+/**
+ * 新しいプロジェクトを開始
+ */
+async function startNewProject(page) {
+  await page.goto('https://labs.google/fx/tools/flow', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(5000);
+
+  // ログインチェック
+  if (page.url().includes('accounts.google.com')) {
+    throw new Error('Not logged in');
+  }
+
+  await dismissNotifications(page);
+
+  // 新しいプロジェクトボタンをクリック
+  const newBtn = await findElement(page, SELECTORS.newProjectButton);
+  if (newBtn) {
+    await newBtn.click();
+    await page.waitForTimeout(5000);
+  }
+}
+
+/**
+ * Image-to-Videoモードを選択
  */
 async function selectImageToVideoMode(page, imagePath) {
   console.error('Selecting Image-to-Video mode...');
 
+  // オーバーレイを閉じるため少し待機
   await page.waitForTimeout(2000);
-  await common.dismissNotifications(page);
+  await dismissNotifications(page);
 
-  const modeBtn = await common.findElement(page, SELECTORS.modeSelector);
+  // モードセレクタをクリック（force: trueでオーバーレイを無視）
+  const modeBtn = await findElement(page, SELECTORS.modeSelector);
   if (modeBtn) {
     await modeBtn.click({ force: true });
     await page.waitForTimeout(1500);
 
-    const i2vOption = await page.$(SELECTORS.imageToVideoOption);
+    // 「画像から動画」を選択
+    const i2vOption = await page.$('text=画像から動画');
     if (i2vOption) {
       await i2vOption.click({ force: true });
       await page.waitForTimeout(2000);
@@ -74,7 +166,7 @@ async function selectImageToVideoMode(page, imagePath) {
 }
 
 /**
- * 単一の動画を生成（新規プロジェクト用）
+ * 単一の動画を生成
  */
 async function generateVideo(page, config, index) {
   console.error(`\n=== Generating Video ${index} ===`);
@@ -84,75 +176,130 @@ async function generateVideo(page, config, index) {
     await selectImageToVideoMode(page, config.imagePath);
   }
 
-  await common.inputPromptAndCreate(page, config.prompt, config);
+  // プロンプト入力
+  const promptInput = await page.waitForSelector(SELECTORS.promptInput, { timeout: 10000 });
+  if (!promptInput) throw new Error('Prompt input not found');
+
+  await promptInput.click();
+  await promptInput.fill('');
+  await page.waitForTimeout(300);
+  await promptInput.fill(config.prompt);
+  await page.waitForTimeout(1000);
+
+  // 作成ボタンをクリック
+  let createBtn = await findElement(page, SELECTORS.createButton);
+  if (!createBtn) throw new Error('Create button not found');
+
+  // ボタンが有効になるまで待機
+  for (let i = 0; i < 20; i++) {
+    const disabled = await createBtn.getAttribute('disabled');
+    if (disabled === null) break;
+    await page.waitForTimeout(500);
+  }
+
+  await createBtn.click({ force: true });
   console.error('Generation started...');
   await page.waitForTimeout(5000);
 
   // 動画生成完了を待つ
-  const result = await common.waitForVideoGeneration(page, config);
+  const startTime = Date.now();
+  let videoUrl = null;
 
-  // シーンに追加してScenebuilderに移動
-  await common.clickAddToSceneAndGoToBuilder(page);
+  while (Date.now() - startTime < config.waitTimeout) {
+    await page.waitForTimeout(10000);
+    console.error(`  ${Math.round((Date.now() - startTime) / 1000)}s elapsed`);
 
-  return result;
-}
+    await dismissNotifications(page);
 
-/**
- * Frame-to-Video モードで動画を生成（既存プロジェクト用）
- */
-async function generateVideoFrame(page, config, index) {
-  console.error(`\n=== Generating Frame Video ${index} ===`);
-
-  // Frame-to-Videoモードを選択
-  await common.selectFrameToVideoModeOnly(page);
-
-  await common.inputPromptAndCreate(page, config.prompt, config);
-  console.error('Generation started...');
-  await page.waitForTimeout(5000);
-
-  // タイムライン内で動画生成完了を待つ（マルチシーンワークフロー用）
-  const result = await common.waitForVideoInTimeline(page, config);
-
-  return result;
-}
-
-/**
- * 最終動画をダウンロード
- */
-async function downloadFinalVideo(page, config) {
-  console.error('\n=== Downloading final video ===');
-
-  // video要素から最終的なURLを取得
-  const videos = await page.$$(SELECTORS.videoElement);
-  let finalVideoUrl = null;
-
-  for (const video of videos) {
-    const src = await video.getAttribute('src');
-    if (src && src.startsWith('http')) {
-      finalVideoUrl = src;
+    const video = await page.$(SELECTORS.videoElement);
+    if (video) {
+      const src = await video.getAttribute('src');
+      if (src && src.startsWith('http')) {
+        videoUrl = src;
+        console.error(`Video ${index} ready!`);
+        break;
+      }
     }
   }
 
-  if (!finalVideoUrl) {
-    throw new Error('Final video URL not found');
+  if (!videoUrl) throw new Error(`Video ${index} generation timeout`);
+
+  return {
+    url: videoUrl,
+    time: Math.round((Date.now() - startTime) / 1000)
+  };
+}
+
+/**
+ * シーン拡張（2個目以降の動画生成）
+ */
+async function extendScene(page, config, index) {
+  console.error(`\n=== Extending Scene ${index} ===`);
+
+  // プラスボタンをクリック
+  await dismissNotifications(page);
+  const addBtn = await page.waitForSelector(SELECTORS.addClipButton, { timeout: 10000 });
+  if (!addBtn) throw new Error('Add clip button not found');
+  await addBtn.click({ force: true });
+  console.error('Clicked add clip button');
+  await page.waitForTimeout(1000);
+
+  // 「拡張…」を選択
+  const extendOption = await page.waitForSelector(SELECTORS.extendOption, { timeout: 5000 });
+  if (!extendOption) throw new Error('Extend option not found');
+  await extendOption.click({ force: true });
+  console.error('Selected extend option');
+  await page.waitForTimeout(2000);
+
+  // プロンプト入力
+  const promptInput = await page.waitForSelector(SELECTORS.promptInput, { timeout: 10000 });
+  if (!promptInput) throw new Error('Prompt input not found');
+
+  await promptInput.click();
+  await promptInput.fill('');
+  await page.waitForTimeout(300);
+  await promptInput.fill(config.prompt);
+  await page.waitForTimeout(1000);
+
+  // 作成ボタンをクリック
+  let createBtn = await findElement(page, SELECTORS.createButton);
+  if (!createBtn) throw new Error('Create button not found');
+
+  // ボタンが有効になるまで待機
+  for (let i = 0; i < 20; i++) {
+    const disabled = await createBtn.getAttribute('disabled');
+    if (disabled === null) break;
+    await page.waitForTimeout(500);
   }
 
-  // ダウンロード
-  const tempPath = config.outputPath.replace('.mp4', '_temp.mp4');
-  await common.downloadFile(finalVideoUrl, tempPath);
+  await createBtn.click({ force: true });
+  console.error('Extension started...');
+  await page.waitForTimeout(5000);
 
-  // 音声処理
-  if (config.keepAudio) {
-    // 音声を保持
-    execSync(`mv "${tempPath}" "${config.outputPath}"`, { stdio: 'pipe' });
-  } else {
-    // 音声なしでコピー
-    execSync(`ffmpeg -y -i "${tempPath}" -an -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
-    try { fs.unlinkSync(tempPath); } catch (e) {}
+  // 動画生成完了を待つ
+  const startTime = Date.now();
+  let completed = false;
+
+  while (Date.now() - startTime < config.waitTimeout) {
+    await page.waitForTimeout(10000);
+    console.error(`  ${Math.round((Date.now() - startTime) / 1000)}s elapsed`);
+
+    await dismissNotifications(page);
+
+    // 拡張完了の判定：動画要素が更新されるか、プラスボタンが再度表示される
+    const addBtnAgain = await page.$(SELECTORS.addClipButton);
+    if (addBtnAgain && await addBtnAgain.isVisible()) {
+      completed = true;
+      console.error(`Scene ${index} extended!`);
+      break;
+    }
   }
 
-  console.error('Output: ' + config.outputPath);
-  return config.outputPath;
+  if (!completed) throw new Error(`Scene ${index} extension timeout`);
+
+  return {
+    time: Math.round((Date.now() - startTime) / 1000)
+  };
 }
 
 /**
@@ -164,17 +311,9 @@ async function main() {
 
   if (input) {
     try {
-      // JSONファイルパスの場合はファイルから読み込む
-      if (input.endsWith('.json') && fs.existsSync(input)) {
-        const fileContent = fs.readFileSync(input, 'utf8');
-        config = { ...config, ...JSON.parse(fileContent) };
-        console.error('Config loaded from file: ' + input);
-      } else {
-        // JSON文字列として解析
-        config = { ...config, ...JSON.parse(input) };
-      }
+      config = { ...config, ...JSON.parse(input) };
     } catch (e) {
-      console.log(JSON.stringify({ error: 'Invalid JSON: ' + e.message }));
+      console.log(JSON.stringify({ error: 'Invalid JSON' }));
       process.exit(1);
     }
   }
@@ -186,12 +325,7 @@ async function main() {
 
   console.error('=== Veo3 Shorts Generation ===');
   console.error('Mode: ' + config.mode);
-  if (config.projectUrl) {
-    console.error('Project URL: ' + config.projectUrl);
-  }
-  if (config.imagePath) {
-    console.error('Image: ' + config.imagePath);
-  }
+  console.error('Image: ' + config.imagePath);
   console.error('Prompt: ' + config.prompt.substring(0, 50) + '...');
 
   let browser, page;
@@ -203,39 +337,51 @@ async function main() {
     const context = browser.contexts()[0];
     page = await context.newPage();
 
-    // 1. プロジェクトを開始
-    await common.startNewProject(page, config);
+    // 1. 新しいプロジェクトを開始（1回だけ）
+    await startNewProject(page);
 
-    if (config.mode === 'frame' && config.projectUrl) {
-      // Frame-to-Video モード（既存プロジェクトのタイムラインに追加）
-      const result = await generateVideoFrame(page, config, 1);
-      results.push(result);
-      totalTime += result.time;
+    // 2. 1個目: 画像アップロード + 動画生成
+    const firstResult = await generateVideo(page, config, 1);
+    results.push(firstResult);
+    totalTime += firstResult.time;
 
-      // 追加のシーン拡張
-      for (let i = 2; i <= config.videoCount; i++) {
-        const extResult = await common.extendScene(page, config, config.prompt, i);
-        results.push(extResult);
-        totalTime += extResult.time;
-      }
-    } else {
-      // Image-to-Video モード（新規プロジェクト）
-      const firstResult = await generateVideo(page, config, 1);
-      results.push(firstResult);
-      totalTime += firstResult.time;
+    // 3. 2個目以降: シーン拡張
+    for (let i = 2; i <= config.videoCount; i++) {
+      const extResult = await extendScene(page, config, i);
+      results.push(extResult);
+      totalTime += extResult.time;
+    }
 
-      // シーン拡張
-      for (let i = 2; i <= config.videoCount; i++) {
-        const extResult = await common.extendScene(page, config, config.prompt, i);
-        results.push(extResult);
-        totalTime += extResult.time;
+    // 4. 最終動画をダウンロード（シーン拡張後は1つの結合された動画になっている）
+    console.error('\n=== Downloading final video ===');
+
+    // video要素から最終的なURLを取得
+    const videos = await page.$$(SELECTORS.videoElement);
+    let finalVideoUrl = null;
+
+    // 最後の動画要素のURLを取得
+    for (const video of videos) {
+      const src = await video.getAttribute('src');
+      if (src && src.startsWith('http')) {
+        finalVideoUrl = src;
       }
     }
 
-    // 動画をダウンロード
-    if (config.download !== false) {
-      await downloadFinalVideo(page, config);
+    if (!finalVideoUrl) {
+      throw new Error('Final video URL not found');
     }
+
+    // ダウンロード
+    const tempPath = config.outputPath.replace('.mp4', '_temp.mp4');
+    await downloadVideo(finalVideoUrl, tempPath);
+
+    // 音声なしでコピー
+    execSync(`ffmpeg -y -i "${tempPath}" -an -c:v copy "${config.outputPath}"`, { stdio: 'pipe' });
+
+    // 一時ファイル削除
+    try { fs.unlinkSync(tempPath); } catch (e) {}
+
+    console.error('Output: ' + config.outputPath);
 
     await page.close();
 
