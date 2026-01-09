@@ -164,9 +164,17 @@ async function main() {
 
   if (input) {
     try {
-      config = { ...config, ...JSON.parse(input) };
+      // JSONファイルパスの場合はファイルから読み込む
+      if (input.endsWith('.json') && fs.existsSync(input)) {
+        const fileContent = fs.readFileSync(input, 'utf8');
+        config = { ...config, ...JSON.parse(fileContent) };
+        console.error('Config loaded from file: ' + input);
+      } else {
+        // JSON文字列として解析
+        config = { ...config, ...JSON.parse(input) };
+      }
     } catch (e) {
-      console.log(JSON.stringify({ error: 'Invalid JSON' }));
+      console.log(JSON.stringify({ error: 'Invalid JSON: ' + e.message }));
       process.exit(1);
     }
   }
