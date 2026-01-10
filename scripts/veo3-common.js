@@ -463,23 +463,30 @@ async function generateImage(page, config, options = {}) {
 /**
  * プロンプト入力して生成ボタンをクリック
  * 改善: プロンプト入力の検出にリトライロジック追加
+ * 改善2: fill()操作にもリトライロジック追加（DOM detach対策）
  */
 async function inputPromptAndCreate(page, prompt, config) {
-  // プロンプト入力を探す（リトライ付き）
-  let promptInput = null;
-  const promptSelectors = [
+  // 優先度の高いセレクタのみを最初に試す（汎用textareaは最終手段）
+  const primarySelectors = [
     SELECTORS.promptInput,
     '#PINHOLE_TEXT_AREA_ELEMENT_ID',
+  ];
+  const fallbackSelectors = [
     'textarea[placeholder*="プロンプト"]',
     'textarea[placeholder*="prompt"]',
     'textarea',
   ];
 
-  for (let attempt = 0; attempt < 5; attempt++) {
-    for (const sel of promptSelectors) {
+  let promptInput = null;
+  let usedSelector = null;
+
+  // まず優先セレクタを試す（UIが安定するまで待機）
+  for (let attempt = 0; attempt < 8; attempt++) {
+    for (const sel of primarySelectors) {
       try {
         promptInput = await page.waitForSelector(sel, { timeout: 3000, state: 'visible' });
         if (promptInput) {
+          usedSelector = sel;
           console.error(`Found prompt input with: ${sel}`);
           break;
         }
@@ -490,26 +497,92 @@ async function inputPromptAndCreate(page, prompt, config) {
 
     if (promptInput) break;
 
-    console.error(`Prompt input not found, retrying... (${attempt + 1}/5)`);
+    // 優先セレクタが見つからない場合、UI安定を待つ
+    console.error(`Primary prompt input not found, waiting for UI... (${attempt + 1}/8)`);
     await page.waitForTimeout(2000);
+  }
 
-    // UIが読み込み中かもしれないので、ページをスクロールして更新
-    try {
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(500);
-    } catch (e) {}
+  // 優先セレクタで見つからなければフォールバック
+  if (!promptInput) {
+    console.error('Trying fallback selectors...');
+    for (const sel of fallbackSelectors) {
+      try {
+        promptInput = await page.waitForSelector(sel, { timeout: 3000, state: 'visible' });
+        if (promptInput) {
+          usedSelector = sel;
+          console.error(`Found prompt input with fallback: ${sel}`);
+          break;
+        }
+      } catch (e) {
+        // 次のセレクタを試す
+      }
+    }
   }
 
   if (!promptInput) {
     await page.screenshot({ path: '/tmp/veo3-prompt-input-not-found.png' });
-    throw new Error('RETRY:Prompt input not found after 5 attempts');
+    throw new Error('RETRY:Prompt input not found after 8 attempts');
   }
 
-  await promptInput.click({ force: true });
-  await promptInput.fill('');
-  await page.waitForTimeout(300);
-  await promptInput.fill(prompt);
-  await page.waitForTimeout(1000);
+  // fill()操作にリトライロジックを追加（DOM detach対策）
+  const MAX_FILL_RETRIES = 3;
+  for (let fillAttempt = 0; fillAttempt < MAX_FILL_RETRIES; fillAttempt++) {
+    try {
+      // 要素がまだDOMにあるか確認
+      const isAttached = await promptInput.evaluate(el => el.isConnected);
+      if (!isAttached) {
+        throw new Error('Element detached, need to re-find');
+      }
+
+      await promptInput.click({ force: true });
+      await page.waitForTimeout(300);
+      await promptInput.fill('');
+      await page.waitForTimeout(300);
+      await promptInput.fill(prompt);
+      await page.waitForTimeout(1000);
+      break; // 成功したらループを抜ける
+
+    } catch (fillError) {
+      console.error(`Fill attempt ${fillAttempt + 1}/${MAX_FILL_RETRIES} failed: ${fillError.message}`);
+
+      if (fillAttempt < MAX_FILL_RETRIES - 1) {
+        // 要素を再取得
+        console.error('Re-finding prompt input...');
+        await page.waitForTimeout(2000);
+
+        promptInput = null;
+        // 優先セレクタで再検索
+        for (const sel of primarySelectors) {
+          try {
+            promptInput = await page.waitForSelector(sel, { timeout: 3000, state: 'visible' });
+            if (promptInput) {
+              console.error(`Re-found prompt input with: ${sel}`);
+              break;
+            }
+          } catch (e) {}
+        }
+
+        if (!promptInput) {
+          // フォールバックで再検索
+          for (const sel of fallbackSelectors) {
+            try {
+              promptInput = await page.waitForSelector(sel, { timeout: 3000, state: 'visible' });
+              if (promptInput) {
+                console.error(`Re-found prompt input with fallback: ${sel}`);
+                break;
+              }
+            } catch (e) {}
+          }
+        }
+
+        if (!promptInput) {
+          throw new Error('RETRY:Could not re-find prompt input');
+        }
+      } else {
+        throw new Error('RETRY:Fill failed after ' + MAX_FILL_RETRIES + ' attempts: ' + fillError.message);
+      }
+    }
+  }
 
   let createBtn = await findElement(page, SELECTORS.createButton);
   if (!createBtn) {
