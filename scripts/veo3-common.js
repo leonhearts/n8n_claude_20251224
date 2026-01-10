@@ -614,32 +614,84 @@ async function inputPromptAndCreate(page, prompt, config) {
 
 /**
  * 動画生成完了を待機（「シーンに追加」ボタンが表示されるまで）
+ * 改善: エラー検出を強化、チェック間隔を短縮
  */
 async function waitForVideoGeneration(page, config) {
   const startTime = Date.now();
 
   while (Date.now() - startTime < config.waitTimeout) {
-    await page.waitForTimeout(10000);
-    console.error(`  ${Math.round((Date.now() - startTime) / 1000)}s elapsed`);
+    // チェック間隔を5秒に短縮
+    await page.waitForTimeout(5000);
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    if (elapsed % 10 === 0) {
+      console.error(`  ${elapsed}s elapsed`);
+    }
 
     await dismissNotifications(page);
 
-    // まず成功をチェック（成功していればエラーチェックは不要）
+    // ===== エラー検出を強化（成功チェックより前に実行） =====
+    try {
+      // 方法1: ページ全体のテキストでエラーメッセージをチェック
+      const pageText = await page.evaluate(() => document.body.innerText);
+      if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
+        console.error('Generation error detected in page text');
+        await page.screenshot({ path: '/tmp/veo3-first-video-error.png' });
+        throw new Error('RETRY:Video generation failed: 生成できませんでした');
+      }
+
+      // 方法2: 「やり直す」「Try again」ボタンの検出
+      const retryBtnSelectors = [
+        'button:has-text("やり直す")',
+        'button:has-text("Try again")',
+        'button:has-text("再試行")',
+      ];
+      for (const sel of retryBtnSelectors) {
+        try {
+          const retryBtn = await page.$(sel);
+          if (retryBtn && await retryBtn.isVisible()) {
+            console.error(`Retry button found: ${sel}`);
+            await page.screenshot({ path: '/tmp/veo3-first-video-retry-btn.png' });
+            throw new Error('RETRY:Video generation failed: Retry button appeared');
+          }
+        } catch (btnErr) {
+          if (btnErr.message.includes('RETRY:')) throw btnErr;
+        }
+      }
+
+      // 方法3: エラーダイアログの検出
+      const errorSelectors = [
+        '[role="alertdialog"]',
+        '[role="alert"]',
+        '.error-message',
+        '[class*="error"]',
+      ];
+      for (const sel of errorSelectors) {
+        try {
+          const errorEl = await page.$(sel);
+          if (errorEl && await errorEl.isVisible()) {
+            const errorText = await errorEl.textContent();
+            if (errorText && (errorText.includes('生成できませんでした') ||
+                            errorText.includes('Could not generate') ||
+                            errorText.includes('エラー'))) {
+              console.error(`Error element found: ${sel} - ${errorText.substring(0, 100)}`);
+              await page.screenshot({ path: '/tmp/veo3-first-video-error-dialog.png' });
+              throw new Error('RETRY:Video generation failed: Error dialog detected');
+            }
+          }
+        } catch (errCheckErr) {
+          if (errCheckErr.message.includes('RETRY:')) throw errCheckErr;
+        }
+      }
+    } catch (e) {
+      if (e.message.includes('RETRY:')) throw e;
+    }
+    // ===== エラー検出強化ここまで =====
+
+    // 成功をチェック（「シーンに追加」ボタンが表示されたら完了）
     const addToSceneBtn = await page.$(SELECTORS.addToSceneButton);
     if (addToSceneBtn && await addToSceneBtn.isVisible()) {
       console.error('Video generated! Found "Add to Scene" button');
       return { success: true, time: Math.round((Date.now() - startTime) / 1000) };
-    }
-
-    // 成功していない場合のみエラーをチェック
-    // より限定的なエラー検出：ダイアログやアラート要素を探す
-    const errorDialog = await page.$('[role="alertdialog"], [role="alert"], .error-message');
-    if (errorDialog && await errorDialog.isVisible()) {
-      const errorText = await errorDialog.textContent();
-      if (errorText && (errorText.includes('生成できませんでした') || errorText.includes('Could not generate'))) {
-        console.error('Generation error detected in dialog: ' + errorText.substring(0, 100));
-        throw new Error('RETRY:Video generation failed: 生成できませんでした');
-      }
     }
   }
 
@@ -899,16 +951,79 @@ async function extendSceneInternal(page, config, prompt, index) {
   }
 
   while (Date.now() - startTime < config.waitTimeout) {
-    // より頻繁にチェック（5秒ごと）
-    await page.waitForTimeout(5000);
+    // より頻繁にチェック（3秒ごと）
+    await page.waitForTimeout(3000);
     const elapsed = Math.round((Date.now() - startTime) / 1000);
-    if (elapsed % 10 === 0) {
+    if (elapsed % 9 === 0) {
       console.error(`  ${elapsed}s elapsed`);
     }
 
     await dismissNotifications(page);
 
-    // まず成功をチェック（クリップ数の増加で完了を検出）
+    // ===== 改善: エラー検出を強化（成功チェックより前に実行） =====
+    try {
+      // 方法1: ページ全体のテキストでエラーメッセージをチェック
+      const pageText = await page.evaluate(() => document.body.innerText);
+      if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
+        console.error('Generation error detected in page text');
+        await page.screenshot({ path: `/tmp/veo3-generation-error-scene${index}.png` });
+        throw new Error('RETRY:Scene extension failed: 生成できませんでした');
+      }
+
+      // 方法2: 「やり直す」「Try again」ボタンの検出
+      const retryBtnSelectors = [
+        'button:has-text("やり直す")',
+        'button:has-text("Try again")',
+        'button:has-text("再試行")',
+        '[role="button"]:has-text("やり直す")',
+      ];
+      for (const sel of retryBtnSelectors) {
+        try {
+          const retryBtn = await page.$(sel);
+          if (retryBtn && await retryBtn.isVisible()) {
+            console.error(`Retry button found with selector: ${sel}`);
+            await page.screenshot({ path: `/tmp/veo3-retry-button-scene${index}.png` });
+            throw new Error('RETRY:Scene extension failed: Retry button appeared');
+          }
+        } catch (btnErr) {
+          if (btnErr.message.includes('RETRY:')) throw btnErr;
+        }
+      }
+
+      // 方法3: エラーダイアログの検出（複数のセレクタ）
+      const errorSelectors = [
+        '[role="alertdialog"]',
+        '[role="alert"]',
+        '.error-message',
+        '[data-testid*="error"]',
+        '[class*="error"]',
+        '[class*="Error"]',
+      ];
+      for (const sel of errorSelectors) {
+        try {
+          const errorEl = await page.$(sel);
+          if (errorEl && await errorEl.isVisible()) {
+            const errorText = await errorEl.textContent();
+            if (errorText && (errorText.includes('生成できませんでした') ||
+                            errorText.includes('Could not generate') ||
+                            errorText.includes('エラー') ||
+                            errorText.includes('失敗'))) {
+              console.error(`Error element found with selector: ${sel} - ${errorText.substring(0, 100)}`);
+              await page.screenshot({ path: `/tmp/veo3-error-dialog-scene${index}.png` });
+              throw new Error('RETRY:Scene extension failed: Error dialog detected');
+            }
+          }
+        } catch (errCheckErr) {
+          if (errCheckErr.message.includes('RETRY:')) throw errCheckErr;
+        }
+      }
+    } catch (e) {
+      if (e.message.includes('RETRY:')) throw e;
+      // ページ評価エラーは無視して続行
+    }
+    // ===== エラー検出強化ここまで =====
+
+    // 成功をチェック（クリップ数の増加で完了を検出）
     const currentClips = await page.$$(SELECTORS.timelineArea);
     const currentClipCount = currentClips.length;
 
@@ -928,26 +1043,6 @@ async function extendSceneInternal(page, config, prompt, index) {
     // クリップは増えたがボタンがまだ非表示の場合は待機を継続
     if (currentClipCount > initialClipCount) {
       console.error(`  Clip added (${currentClipCount}), waiting for button to be ready...`);
-      continue; // 成功途中なのでエラーチェックはスキップ
-    }
-
-    // 成功していない場合のみエラーをチェック（ダイアログ要素を探す）
-    try {
-      const errorDialog = await page.$('[role="alertdialog"], [role="alert"], .error-message, [data-testid*="error"]');
-      let errorVisible = false;
-      try {
-        errorVisible = errorDialog && await errorDialog.isVisible();
-      } catch (e) {}
-      if (errorVisible) {
-        const errorText = await errorDialog.textContent();
-        if (errorText && (errorText.includes('生成できませんでした') || errorText.includes('Could not generate'))) {
-          console.error('Generation error detected in dialog: ' + errorText.substring(0, 100));
-          await page.screenshot({ path: `/tmp/veo3-generation-error-scene${index}.png` });
-          throw new Error('RETRY:Scene extension failed: 生成できませんでした');
-        }
-      }
-    } catch (e) {
-      if (e.message.includes('RETRY:')) throw e;
     }
   }
 
