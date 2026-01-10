@@ -1022,38 +1022,99 @@ async function extendScene(page, config, prompt, index) {
 
 /**
  * タイムラインの最後のクリップをクリック
- * シンプル版: DOM順序で最後の .sc-624db470-0 要素をクリック
+ * 改善版: 複数のセレクタとキーボードナビゲーションを使用
  */
 async function clickTimelineEnd(page) {
   console.error('Clicking last clip in timeline...');
 
-  // クリップを取得（HTMLで確認した正確なセレクタ）
-  const clips = await page.$$('.sc-624db470-0');
+  // 方法1: 複数のセレクタを試す
+  const clipSelectors = [
+    '.sc-624db470-0',  // 元のセレクタ
+    '[data-testid*="clip"]',
+    '[data-testid*="scene"]',
+    '[class*="timeline"] [class*="clip"]',
+    '[class*="timeline"] [class*="item"]',
+    '[class*="scene-builder"] [class*="clip"]',
+  ];
 
-  if (clips.length === 0) {
-    console.error('No clips found with .sc-624db470-0');
-    return false;
+  let clips = [];
+  for (const sel of clipSelectors) {
+    try {
+      clips = await page.$$(sel);
+      if (clips.length > 0) {
+        console.error(`Found ${clips.length} clips with selector: ${sel}`);
+        break;
+      }
+    } catch (e) {}
   }
 
-  console.error(`Found ${clips.length} clips`);
+  if (clips.length > 0) {
+    // 最後のクリップを取得
+    const lastClip = clips[clips.length - 1];
 
-  // 最後のクリップを取得
-  const lastClip = clips[clips.length - 1];
+    // スクロールして表示
+    try {
+      await lastClip.scrollIntoViewIfNeeded();
+    } catch (e) {
+      console.error('scrollIntoViewIfNeeded failed: ' + e.message);
+    }
+    await page.waitForTimeout(300);
 
-  // スクロールして表示
+    // クリック
+    await lastClip.click({ force: true });
+    console.error(`Clicked clip ${clips.length} of ${clips.length}`);
+    await page.waitForTimeout(500);
+    return true;
+  }
+
+  // 方法2: プラスボタンの左側をクリック（プラスボタンを基準に）
+  console.error('No clips found with standard selectors, trying position-based click...');
+  const addClipBtn = await page.$(SELECTORS.addClipButton);
+  if (addClipBtn) {
+    try {
+      const box = await addClipBtn.boundingBox();
+      if (box) {
+        // プラスボタンの左側（80px左）をクリック
+        const clickX = box.x - 80;
+        const clickY = box.y + box.height / 2;
+        console.error(`Clicking position (${clickX}, ${clickY}) - left of add button`);
+        await page.mouse.click(clickX, clickY);
+        await page.waitForTimeout(500);
+        return true;
+      }
+    } catch (e) {
+      console.error('Position-based click failed: ' + e.message);
+    }
+  }
+
+  // 方法3: キーボードナビゲーション（End キー）
+  console.error('Trying keyboard navigation (End key)...');
   try {
-    await lastClip.scrollIntoViewIfNeeded();
+    // タイムラインエリアにフォーカス
+    const timelineArea = await page.$('[class*="timeline"]');
+    if (timelineArea) {
+      await timelineArea.click({ force: true });
+      await page.waitForTimeout(300);
+    }
+
+    // End キーを押して最後に移動
+    await page.keyboard.press('End');
+    await page.waitForTimeout(500);
+
+    // 右矢印を数回押して確実に最後へ
+    for (let i = 0; i < 30; i++) {
+      await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(50);
+    }
+    await page.waitForTimeout(500);
+    console.error('Used keyboard navigation to reach end');
+    return true;
   } catch (e) {
-    console.error('scrollIntoViewIfNeeded failed: ' + e.message);
+    console.error('Keyboard navigation failed: ' + e.message);
   }
-  await page.waitForTimeout(300);
 
-  // クリック
-  await lastClip.click({ force: true });
-  console.error(`Clicked clip ${clips.length} of ${clips.length}`);
-
-  await page.waitForTimeout(500);
-  return true;
+  console.error('WARNING: Could not click last clip');
+  return false;
 }
 
 /**
