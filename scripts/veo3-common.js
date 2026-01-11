@@ -9,6 +9,32 @@ const path = require('path');
 const https = require('https');
 const http = require('http');
 
+// デバッグログファイル
+const DEBUG_LOG_PATH = '/tmp/veo3-debug.log';
+
+/**
+ * デバッグログを出力（console.errorとファイル両方）
+ */
+function debugLog(message) {
+  const timestamp = new Date().toISOString();
+  const logLine = `[${timestamp}] ${message}`;
+  console.error(logLine);
+  try {
+    fs.appendFileSync(DEBUG_LOG_PATH, logLine + '\n');
+  } catch (e) {
+    // ファイル書き込みエラーは無視
+  }
+}
+
+/**
+ * デバッグログをクリア（新しいセッション開始時）
+ */
+function clearDebugLog() {
+  try {
+    fs.writeFileSync(DEBUG_LOG_PATH, '=== Veo3 Debug Log Started ===\n');
+  } catch (e) {}
+}
+
 // 共通セレクタ
 const SELECTORS = {
   promptInput: '#PINHOLE_TEXT_AREA_ELEMENT_ID',
@@ -192,48 +218,115 @@ async function findElement(page, selectors) {
  * プロジェクトを開始（既存または新規）
  */
 async function startNewProject(page, config) {
-  let targetUrl = config.projectUrl || 'https://labs.google/fx/tools/flow';
+  // 新しいセッション開始時にログをクリア
+  clearDebugLog();
+  debugLog('=== startNewProject called ===');
+  debugLog('config.projectUrl: ' + (config.projectUrl || 'undefined (new project)'));
 
-  if (targetUrl.includes('/scenes/')) {
-    const baseUrl = targetUrl.replace(/\/scenes\/.*$/, '');
-    console.error('SceneBuilder URL detected, converting to project URL:');
-    console.error('  From: ' + targetUrl);
-    console.error('  To: ' + baseUrl);
-    targetUrl = baseUrl;
+  // 新規プロジェクトの場合は必ずFlowのトップページから開始
+  const targetUrl = config.projectUrl || 'https://labs.google/fx/tools/flow';
+
+  if (config.projectUrl && config.projectUrl.includes('/scenes/')) {
+    const baseUrl = config.projectUrl.replace(/\/scenes\/.*$/, '');
+    debugLog('SceneBuilder URL detected, converting to project URL:');
+    debugLog('  From: ' + config.projectUrl);
+    debugLog('  To: ' + baseUrl);
   }
 
-  console.error('Opening: ' + targetUrl);
+  debugLog('Opening: ' + targetUrl);
 
   await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(5000);
 
+  debugLog('Current URL after navigation: ' + page.url());
+
   if (page.url().includes('accounts.google.com')) {
     throw new Error('Not logged in');
-  }
-
-  const currentUrl = page.url();
-  if (currentUrl.includes('/scenes/')) {
-    console.error('Redirected to SceneBuilder, navigating back to project...');
-    const projectBaseUrl = currentUrl.replace(/\/scenes\/.*$/, '');
-    await page.goto(projectBaseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(3000);
   }
 
   await dismissFileDialog(page);
   await dismissConsentPopup(page);
   await dismissNotifications(page);
 
+  // 新規プロジェクトを作成する場合
   if (!config.projectUrl) {
-    const newBtn = await findElement(page, SELECTORS.newProjectButton);
-    if (newBtn) {
-      await newBtn.click();
-      await page.waitForTimeout(5000);
+    debugLog('Creating new project...');
+
+    // SceneBuilderやプロジェクトにリダイレクトされた場合、Flowトップに戻る
+    let currentUrl = page.url();
+    debugLog('Current URL: ' + currentUrl);
+
+    // 最大3回リトライしてFlowトップページを確保
+    for (let retry = 0; retry < 3; retry++) {
+      currentUrl = page.url();
+      if (currentUrl.includes('/scenes/') || currentUrl.includes('/project/')) {
+        debugLog(`Redirected to project (attempt ${retry + 1}/3), navigating to Flow top page...`);
+        await page.goto('https://labs.google/fx/tools/flow', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForTimeout(3000);
+        debugLog('After redirect, URL: ' + page.url());
+        await dismissFileDialog(page);
+        await dismissConsentPopup(page);
+      } else {
+        debugLog('On Flow top page: ' + currentUrl);
+        break;
+      }
+    }
+
+    // 「新しいプロジェクト」ボタンをクリック（リトライ付き）
+    let newBtnClicked = false;
+    for (let i = 0; i < 5; i++) {
+      const newBtn = await findElement(page, SELECTORS.newProjectButton);
+      if (newBtn) {
+        await newBtn.click();
+        debugLog('Clicked "New Project" button');
+        await page.waitForTimeout(5000);
+        debugLog('After clicking New Project, URL: ' + page.url());
+        newBtnClicked = true;
+        break;
+      }
+      debugLog(`"New Project" button not found, retrying... (${i + 1}/5)`);
+      await page.waitForTimeout(2000);
+    }
+
+    if (!newBtnClicked) {
+      // ボタンが見つからない場合、現在のURLをチェック
+      currentUrl = page.url();
+      debugLog('New Project button not found. Current URL: ' + currentUrl);
+      if (currentUrl.includes('/scenes/') || currentUrl.includes('/project/')) {
+        debugLog('WARNING: Could not find "New Project" button, but already in a project');
+        // 既にプロジェクトにいる場合は続行（ただし警告を出す）
+      } else {
+        throw new Error('RETRY:Could not find "New Project" button');
+      }
+    }
+
+    // 新しいプロジェクトが作成されたか確認（Videos/Imagesボタンが表示されるまで待機）
+    debugLog('Waiting for new project to load...');
+    for (let i = 0; i < 10; i++) {
+      const imagesBtn = await page.$(SELECTORS.imagesButton);
+      const videosBtn = await page.$(SELECTORS.videosButton);
+      if (imagesBtn || videosBtn) {
+        debugLog('New project loaded successfully. Final URL: ' + page.url());
+        break;
+      }
+      await page.waitForTimeout(1000);
     }
   } else {
-    console.error('Using existing project');
-    console.error('Waiting for page content to load...');
+    debugLog('Using existing project');
+    debugLog('Waiting for page content to load...');
+
+    // 既存プロジェクトの場合、SceneBuilderからプロジェクト画面に戻る
+    const currentUrl = page.url();
+    if (currentUrl.includes('/scenes/')) {
+      debugLog('Redirected to SceneBuilder, navigating back to project...');
+      const projectBaseUrl = currentUrl.replace(/\/scenes\/.*$/, '');
+      await page.goto(projectBaseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(3000);
+    }
+
     await page.waitForTimeout(6000);
   }
+  debugLog('=== startNewProject completed ===');
 }
 
 /**
@@ -1377,6 +1470,8 @@ async function selectFrameToVideoModeOnly(page) {
 module.exports = {
   SELECTORS,
   DEFAULT_CONFIG_BASE,
+  debugLog,
+  clearDebugLog,
   downloadFile,
   dismissNotifications,
   dismissConsentPopup,
