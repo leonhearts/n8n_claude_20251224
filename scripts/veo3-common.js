@@ -463,23 +463,30 @@ async function generateImage(page, config, options = {}) {
 /**
  * プロンプト入力して生成ボタンをクリック
  * 改善: プロンプト入力の検出にリトライロジック追加
+ * 改善2: fill()操作にもリトライロジック追加（DOM detach対策）
  */
 async function inputPromptAndCreate(page, prompt, config) {
-  // プロンプト入力を探す（リトライ付き）
-  let promptInput = null;
-  const promptSelectors = [
+  // 優先度の高いセレクタのみを最初に試す（汎用textareaは最終手段）
+  const primarySelectors = [
     SELECTORS.promptInput,
     '#PINHOLE_TEXT_AREA_ELEMENT_ID',
+  ];
+  const fallbackSelectors = [
     'textarea[placeholder*="プロンプト"]',
     'textarea[placeholder*="prompt"]',
     'textarea',
   ];
 
-  for (let attempt = 0; attempt < 5; attempt++) {
-    for (const sel of promptSelectors) {
+  let promptInput = null;
+  let usedSelector = null;
+
+  // まず優先セレクタを試す（UIが安定するまで待機）
+  for (let attempt = 0; attempt < 8; attempt++) {
+    for (const sel of primarySelectors) {
       try {
         promptInput = await page.waitForSelector(sel, { timeout: 3000, state: 'visible' });
         if (promptInput) {
+          usedSelector = sel;
           console.error(`Found prompt input with: ${sel}`);
           break;
         }
@@ -490,26 +497,92 @@ async function inputPromptAndCreate(page, prompt, config) {
 
     if (promptInput) break;
 
-    console.error(`Prompt input not found, retrying... (${attempt + 1}/5)`);
+    // 優先セレクタが見つからない場合、UI安定を待つ
+    console.error(`Primary prompt input not found, waiting for UI... (${attempt + 1}/8)`);
     await page.waitForTimeout(2000);
+  }
 
-    // UIが読み込み中かもしれないので、ページをスクロールして更新
-    try {
-      await page.keyboard.press('Escape');
-      await page.waitForTimeout(500);
-    } catch (e) {}
+  // 優先セレクタで見つからなければフォールバック
+  if (!promptInput) {
+    console.error('Trying fallback selectors...');
+    for (const sel of fallbackSelectors) {
+      try {
+        promptInput = await page.waitForSelector(sel, { timeout: 3000, state: 'visible' });
+        if (promptInput) {
+          usedSelector = sel;
+          console.error(`Found prompt input with fallback: ${sel}`);
+          break;
+        }
+      } catch (e) {
+        // 次のセレクタを試す
+      }
+    }
   }
 
   if (!promptInput) {
     await page.screenshot({ path: '/tmp/veo3-prompt-input-not-found.png' });
-    throw new Error('RETRY:Prompt input not found after 5 attempts');
+    throw new Error('RETRY:Prompt input not found after 8 attempts');
   }
 
-  await promptInput.click({ force: true });
-  await promptInput.fill('');
-  await page.waitForTimeout(300);
-  await promptInput.fill(prompt);
-  await page.waitForTimeout(1000);
+  // fill()操作にリトライロジックを追加（DOM detach対策）
+  const MAX_FILL_RETRIES = 3;
+  for (let fillAttempt = 0; fillAttempt < MAX_FILL_RETRIES; fillAttempt++) {
+    try {
+      // 要素がまだDOMにあるか確認
+      const isAttached = await promptInput.evaluate(el => el.isConnected);
+      if (!isAttached) {
+        throw new Error('Element detached, need to re-find');
+      }
+
+      await promptInput.click({ force: true });
+      await page.waitForTimeout(300);
+      await promptInput.fill('');
+      await page.waitForTimeout(300);
+      await promptInput.fill(prompt);
+      await page.waitForTimeout(1000);
+      break; // 成功したらループを抜ける
+
+    } catch (fillError) {
+      console.error(`Fill attempt ${fillAttempt + 1}/${MAX_FILL_RETRIES} failed: ${fillError.message}`);
+
+      if (fillAttempt < MAX_FILL_RETRIES - 1) {
+        // 要素を再取得
+        console.error('Re-finding prompt input...');
+        await page.waitForTimeout(2000);
+
+        promptInput = null;
+        // 優先セレクタで再検索
+        for (const sel of primarySelectors) {
+          try {
+            promptInput = await page.waitForSelector(sel, { timeout: 3000, state: 'visible' });
+            if (promptInput) {
+              console.error(`Re-found prompt input with: ${sel}`);
+              break;
+            }
+          } catch (e) {}
+        }
+
+        if (!promptInput) {
+          // フォールバックで再検索
+          for (const sel of fallbackSelectors) {
+            try {
+              promptInput = await page.waitForSelector(sel, { timeout: 3000, state: 'visible' });
+              if (promptInput) {
+                console.error(`Re-found prompt input with fallback: ${sel}`);
+                break;
+              }
+            } catch (e) {}
+          }
+        }
+
+        if (!promptInput) {
+          throw new Error('RETRY:Could not re-find prompt input');
+        }
+      } else {
+        throw new Error('RETRY:Fill failed after ' + MAX_FILL_RETRIES + ' attempts: ' + fillError.message);
+      }
+    }
+  }
 
   let createBtn = await findElement(page, SELECTORS.createButton);
   if (!createBtn) {
@@ -541,32 +614,84 @@ async function inputPromptAndCreate(page, prompt, config) {
 
 /**
  * 動画生成完了を待機（「シーンに追加」ボタンが表示されるまで）
+ * 改善: エラー検出を強化、チェック間隔を短縮
  */
 async function waitForVideoGeneration(page, config) {
   const startTime = Date.now();
 
   while (Date.now() - startTime < config.waitTimeout) {
-    await page.waitForTimeout(10000);
-    console.error(`  ${Math.round((Date.now() - startTime) / 1000)}s elapsed`);
+    // チェック間隔を5秒に短縮
+    await page.waitForTimeout(5000);
+    const elapsed = Math.round((Date.now() - startTime) / 1000);
+    if (elapsed % 10 === 0) {
+      console.error(`  ${elapsed}s elapsed`);
+    }
 
     await dismissNotifications(page);
 
-    // まず成功をチェック（成功していればエラーチェックは不要）
+    // ===== エラー検出を強化（成功チェックより前に実行） =====
+    try {
+      // 方法1: ページ全体のテキストでエラーメッセージをチェック
+      const pageText = await page.evaluate(() => document.body.innerText);
+      if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
+        console.error('Generation error detected in page text');
+        await page.screenshot({ path: '/tmp/veo3-first-video-error.png' });
+        throw new Error('RETRY:Video generation failed: 生成できませんでした');
+      }
+
+      // 方法2: 「やり直す」「Try again」ボタンの検出
+      const retryBtnSelectors = [
+        'button:has-text("やり直す")',
+        'button:has-text("Try again")',
+        'button:has-text("再試行")',
+      ];
+      for (const sel of retryBtnSelectors) {
+        try {
+          const retryBtn = await page.$(sel);
+          if (retryBtn && await retryBtn.isVisible()) {
+            console.error(`Retry button found: ${sel}`);
+            await page.screenshot({ path: '/tmp/veo3-first-video-retry-btn.png' });
+            throw new Error('RETRY:Video generation failed: Retry button appeared');
+          }
+        } catch (btnErr) {
+          if (btnErr.message.includes('RETRY:')) throw btnErr;
+        }
+      }
+
+      // 方法3: エラーダイアログの検出
+      const errorSelectors = [
+        '[role="alertdialog"]',
+        '[role="alert"]',
+        '.error-message',
+        '[class*="error"]',
+      ];
+      for (const sel of errorSelectors) {
+        try {
+          const errorEl = await page.$(sel);
+          if (errorEl && await errorEl.isVisible()) {
+            const errorText = await errorEl.textContent();
+            if (errorText && (errorText.includes('生成できませんでした') ||
+                            errorText.includes('Could not generate') ||
+                            errorText.includes('エラー'))) {
+              console.error(`Error element found: ${sel} - ${errorText.substring(0, 100)}`);
+              await page.screenshot({ path: '/tmp/veo3-first-video-error-dialog.png' });
+              throw new Error('RETRY:Video generation failed: Error dialog detected');
+            }
+          }
+        } catch (errCheckErr) {
+          if (errCheckErr.message.includes('RETRY:')) throw errCheckErr;
+        }
+      }
+    } catch (e) {
+      if (e.message.includes('RETRY:')) throw e;
+    }
+    // ===== エラー検出強化ここまで =====
+
+    // 成功をチェック（「シーンに追加」ボタンが表示されたら完了）
     const addToSceneBtn = await page.$(SELECTORS.addToSceneButton);
     if (addToSceneBtn && await addToSceneBtn.isVisible()) {
       console.error('Video generated! Found "Add to Scene" button');
       return { success: true, time: Math.round((Date.now() - startTime) / 1000) };
-    }
-
-    // 成功していない場合のみエラーをチェック
-    // より限定的なエラー検出：ダイアログやアラート要素を探す
-    const errorDialog = await page.$('[role="alertdialog"], [role="alert"], .error-message');
-    if (errorDialog && await errorDialog.isVisible()) {
-      const errorText = await errorDialog.textContent();
-      if (errorText && (errorText.includes('生成できませんでした') || errorText.includes('Could not generate'))) {
-        console.error('Generation error detected in dialog: ' + errorText.substring(0, 100));
-        throw new Error('RETRY:Video generation failed: 生成できませんでした');
-      }
     }
   }
 
@@ -826,16 +951,79 @@ async function extendSceneInternal(page, config, prompt, index) {
   }
 
   while (Date.now() - startTime < config.waitTimeout) {
-    // より頻繁にチェック（5秒ごと）
-    await page.waitForTimeout(5000);
+    // より頻繁にチェック（3秒ごと）
+    await page.waitForTimeout(3000);
     const elapsed = Math.round((Date.now() - startTime) / 1000);
-    if (elapsed % 10 === 0) {
+    if (elapsed % 9 === 0) {
       console.error(`  ${elapsed}s elapsed`);
     }
 
     await dismissNotifications(page);
 
-    // まず成功をチェック（クリップ数の増加で完了を検出）
+    // ===== 改善: エラー検出を強化（成功チェックより前に実行） =====
+    try {
+      // 方法1: ページ全体のテキストでエラーメッセージをチェック
+      const pageText = await page.evaluate(() => document.body.innerText);
+      if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
+        console.error('Generation error detected in page text');
+        await page.screenshot({ path: `/tmp/veo3-generation-error-scene${index}.png` });
+        throw new Error('RETRY:Scene extension failed: 生成できませんでした');
+      }
+
+      // 方法2: 「やり直す」「Try again」ボタンの検出
+      const retryBtnSelectors = [
+        'button:has-text("やり直す")',
+        'button:has-text("Try again")',
+        'button:has-text("再試行")',
+        '[role="button"]:has-text("やり直す")',
+      ];
+      for (const sel of retryBtnSelectors) {
+        try {
+          const retryBtn = await page.$(sel);
+          if (retryBtn && await retryBtn.isVisible()) {
+            console.error(`Retry button found with selector: ${sel}`);
+            await page.screenshot({ path: `/tmp/veo3-retry-button-scene${index}.png` });
+            throw new Error('RETRY:Scene extension failed: Retry button appeared');
+          }
+        } catch (btnErr) {
+          if (btnErr.message.includes('RETRY:')) throw btnErr;
+        }
+      }
+
+      // 方法3: エラーダイアログの検出（複数のセレクタ）
+      const errorSelectors = [
+        '[role="alertdialog"]',
+        '[role="alert"]',
+        '.error-message',
+        '[data-testid*="error"]',
+        '[class*="error"]',
+        '[class*="Error"]',
+      ];
+      for (const sel of errorSelectors) {
+        try {
+          const errorEl = await page.$(sel);
+          if (errorEl && await errorEl.isVisible()) {
+            const errorText = await errorEl.textContent();
+            if (errorText && (errorText.includes('生成できませんでした') ||
+                            errorText.includes('Could not generate') ||
+                            errorText.includes('エラー') ||
+                            errorText.includes('失敗'))) {
+              console.error(`Error element found with selector: ${sel} - ${errorText.substring(0, 100)}`);
+              await page.screenshot({ path: `/tmp/veo3-error-dialog-scene${index}.png` });
+              throw new Error('RETRY:Scene extension failed: Error dialog detected');
+            }
+          }
+        } catch (errCheckErr) {
+          if (errCheckErr.message.includes('RETRY:')) throw errCheckErr;
+        }
+      }
+    } catch (e) {
+      if (e.message.includes('RETRY:')) throw e;
+      // ページ評価エラーは無視して続行
+    }
+    // ===== エラー検出強化ここまで =====
+
+    // 成功をチェック（クリップ数の増加で完了を検出）
     const currentClips = await page.$$(SELECTORS.timelineArea);
     const currentClipCount = currentClips.length;
 
@@ -855,26 +1043,6 @@ async function extendSceneInternal(page, config, prompt, index) {
     // クリップは増えたがボタンがまだ非表示の場合は待機を継続
     if (currentClipCount > initialClipCount) {
       console.error(`  Clip added (${currentClipCount}), waiting for button to be ready...`);
-      continue; // 成功途中なのでエラーチェックはスキップ
-    }
-
-    // 成功していない場合のみエラーをチェック（ダイアログ要素を探す）
-    try {
-      const errorDialog = await page.$('[role="alertdialog"], [role="alert"], .error-message, [data-testid*="error"]');
-      let errorVisible = false;
-      try {
-        errorVisible = errorDialog && await errorDialog.isVisible();
-      } catch (e) {}
-      if (errorVisible) {
-        const errorText = await errorDialog.textContent();
-        if (errorText && (errorText.includes('生成できませんでした') || errorText.includes('Could not generate'))) {
-          console.error('Generation error detected in dialog: ' + errorText.substring(0, 100));
-          await page.screenshot({ path: `/tmp/veo3-generation-error-scene${index}.png` });
-          throw new Error('RETRY:Scene extension failed: 生成できませんでした');
-        }
-      }
-    } catch (e) {
-      if (e.message.includes('RETRY:')) throw e;
     }
   }
 
@@ -949,38 +1117,171 @@ async function extendScene(page, config, prompt, index) {
 
 /**
  * タイムラインの最後のクリップをクリック
- * シンプル版: DOM順序で最後の .sc-624db470-0 要素をクリック
+ * 改善版: DOM構造から最後のクリップを探す
  */
 async function clickTimelineEnd(page) {
   console.error('Clicking last clip in timeline...');
 
-  // クリップを取得（HTMLで確認した正確なセレクタ）
-  const clips = await page.$$('.sc-624db470-0');
-
-  if (clips.length === 0) {
-    console.error('No clips found with .sc-624db470-0');
-    return false;
-  }
-
-  console.error(`Found ${clips.length} clips`);
-
-  // 最後のクリップを取得
-  const lastClip = clips[clips.length - 1];
-
-  // スクロールして表示
+  // 方法1: プラスボタンの親要素から兄弟要素（クリップ）を探す
+  console.error('Finding last clip from DOM structure...');
   try {
-    await lastClip.scrollIntoViewIfNeeded();
+    const lastClipInfo = await page.evaluate(() => {
+      // プラスボタンを探す
+      const addBtn = document.querySelector('#PINHOLE_ADD_CLIP_CARD_ID');
+      if (!addBtn) {
+        console.log('Add button not found');
+        return null;
+      }
+
+      // プラスボタンの親要素を辿って、クリップのコンテナを探す
+      let container = addBtn.parentElement;
+      let clips = [];
+
+      // 親を辿りながらクリップを探す
+      for (let i = 0; i < 5; i++) {
+        if (!container) break;
+
+        // 子要素の中からクリップらしいものを探す
+        const children = Array.from(container.children);
+        clips = children.filter(child => {
+          // プラスボタン自体は除外
+          if (child === addBtn || child.contains(addBtn)) return false;
+          // クリック可能な要素（div, button, など）で、サムネイルを含むもの
+          const hasImg = child.querySelector('img') !== null;
+          const hasVideo = child.querySelector('video') !== null;
+          return hasImg || hasVideo || child.getAttribute('role') === 'button';
+        });
+
+        if (clips.length > 0) {
+          console.log(`Found ${clips.length} clips at level ${i}`);
+          break;
+        }
+
+        container = container.parentElement;
+      }
+
+      if (clips.length === 0) {
+        // 別の方法: タイムラインエリア全体を探す
+        const timelineSelectors = [
+          '[class*="timeline"]',
+          '[class*="scene-builder"]',
+          '[class*="clip-list"]',
+        ];
+
+        for (const sel of timelineSelectors) {
+          const timeline = document.querySelector(sel);
+          if (timeline) {
+            // 画像を含む要素を探す
+            const imgContainers = Array.from(timeline.querySelectorAll('img')).map(img => {
+              // 画像の親要素でクリック可能なものを探す
+              let parent = img.parentElement;
+              for (let j = 0; j < 5; j++) {
+                if (!parent) break;
+                if (parent.getAttribute('role') === 'button' ||
+                    parent.tagName === 'BUTTON' ||
+                    parent.onclick ||
+                    parent.classList.length > 0) {
+                  return parent;
+                }
+                parent = parent.parentElement;
+              }
+              return img;
+            });
+
+            if (imgContainers.length > 0) {
+              clips = imgContainers;
+              console.log(`Found ${clips.length} image containers in timeline`);
+              break;
+            }
+          }
+        }
+      }
+
+      if (clips.length === 0) {
+        return null;
+      }
+
+      // 最後のクリップの情報を返す
+      const lastClip = clips[clips.length - 1];
+      const rect = lastClip.getBoundingClientRect();
+
+      // クリック用にユニークな識別子を設定
+      const uniqueId = 'veo3-last-clip-' + Date.now();
+      lastClip.setAttribute('data-veo3-click-target', uniqueId);
+
+      return {
+        selector: `[data-veo3-click-target="${uniqueId}"]`,
+        tagName: lastClip.tagName,
+        className: lastClip.className,
+        clipCount: clips.length,
+        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+      };
+    });
+
+    if (lastClipInfo) {
+      console.error(`Found ${lastClipInfo.clipCount} clips, clicking last one: ${lastClipInfo.tagName}.${lastClipInfo.className}`);
+      const lastClip = await page.$(lastClipInfo.selector);
+      if (lastClip) {
+        await lastClip.click({ force: true });
+        console.error('Clicked last clip via DOM structure');
+        await page.waitForTimeout(500);
+        return true;
+      }
+    }
   } catch (e) {
-    console.error('scrollIntoViewIfNeeded failed: ' + e.message);
+    console.error('DOM structure search failed: ' + e.message);
   }
-  await page.waitForTimeout(300);
 
-  // クリック
-  await lastClip.click({ force: true });
-  console.error(`Clicked clip ${clips.length} of ${clips.length}`);
+  // 方法2: 複数のクリップセレクタを試す
+  console.error('Trying clip selectors...');
+  const clipSelectors = [
+    '.sc-624db470-0',
+    '[data-testid*="clip"]',
+    '[data-testid*="scene"]',
+    '[class*="clip"]',
+  ];
 
-  await page.waitForTimeout(500);
-  return true;
+  for (const sel of clipSelectors) {
+    try {
+      const clips = await page.$$(sel);
+      if (clips.length > 0) {
+        console.error(`Found ${clips.length} clips with selector: ${sel}`);
+        const lastClip = clips[clips.length - 1];
+        await lastClip.click({ force: true });
+        console.error('Clicked last clip');
+        await page.waitForTimeout(500);
+        return true;
+      }
+    } catch (e) {}
+  }
+
+  // 方法3: キーボードナビゲーション
+  console.error('Trying keyboard navigation...');
+  try {
+    const addClipBtn = await page.$(SELECTORS.addClipButton);
+    if (addClipBtn) {
+      const box = await addClipBtn.boundingBox();
+      if (box) {
+        // プラスボタンの左側をクリックしてフォーカス
+        await page.mouse.click(box.x - 50, box.y + box.height / 2);
+        await page.waitForTimeout(300);
+      }
+    }
+
+    // 右矢印を何度も押して最後へ
+    for (let i = 0; i < 50; i++) {
+      await page.keyboard.press('ArrowRight');
+      await page.waitForTimeout(30);
+    }
+    await page.waitForTimeout(500);
+    console.error('Used keyboard navigation to reach end');
+    return true;
+  } catch (e) {
+    console.error('Keyboard navigation failed: ' + e.message);
+  }
+
+  console.error('WARNING: Could not click last clip');
+  return false;
 }
 
 /**

@@ -60,12 +60,9 @@ const DEFAULT_CONFIG = {
 };
 
 /**
- * ベース画像を生成（ダウンロードなし）
+ * ベース画像を生成（内部処理）
  */
-async function generateBaseImage(page, config) {
-  console.error('\n=== Generating Base Image ===');
-  console.error('Image prompt: ' + config.imagePrompt.substring(0, 80) + '...');
-
+async function generateBaseImageInternal(page, config) {
   // 画像生成モードに切り替え
   await selectImagesMode(page);
 
@@ -80,7 +77,7 @@ async function generateBaseImage(page, config) {
 
   // プロンプト入力
   const promptInput = await page.waitForSelector(SELECTORS.promptInput, { timeout: 10000 });
-  if (!promptInput) throw new Error('Prompt input not found');
+  if (!promptInput) throw new Error('RETRY:Prompt input not found');
 
   await promptInput.click();
   await promptInput.fill('');
@@ -90,7 +87,7 @@ async function generateBaseImage(page, config) {
 
   // 作成ボタンをクリック
   let createBtn = await findElement(page, SELECTORS.createButton);
-  if (!createBtn) throw new Error('Create button not found');
+  if (!createBtn) throw new Error('RETRY:Create button not found');
 
   for (let i = 0; i < 10; i++) {
     const disabled = await createBtn.getAttribute('disabled');
@@ -117,9 +114,29 @@ async function generateBaseImage(page, config) {
 
       if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
         console.error('Generation error detected on page');
-        throw new Error('Image generation failed: 生成できませんでした');
+        await page.screenshot({ path: '/tmp/veo3-image-generation-error.png' });
+        throw new Error('RETRY:Image generation failed: 生成できませんでした');
+      }
+
+      // 「やり直す」ボタンの検出
+      const retryBtnSelectors = [
+        'button:has-text("やり直す")',
+        'button:has-text("Try again")',
+      ];
+      for (const sel of retryBtnSelectors) {
+        try {
+          const retryBtn = await page.$(sel);
+          if (retryBtn && await retryBtn.isVisible()) {
+            console.error(`Retry button found: ${sel}`);
+            await page.screenshot({ path: '/tmp/veo3-image-retry-btn.png' });
+            throw new Error('RETRY:Image generation failed: Retry button appeared');
+          }
+        } catch (btnErr) {
+          if (btnErr.message.includes('RETRY:')) throw btnErr;
+        }
       }
     } catch (evalErr) {
+      if (evalErr.message.includes('RETRY:')) throw evalErr;
       if (evalErr.message.includes('Execution context was destroyed') ||
           evalErr.message.includes('navigation')) {
         consecutiveErrors++;
@@ -131,9 +148,6 @@ async function generateBaseImage(page, config) {
           consecutiveErrors = 0;
         }
         continue;
-      }
-      if (evalErr.message.includes('生成できませんでした')) {
-        throw evalErr;
       }
     }
 
@@ -176,11 +190,54 @@ async function generateBaseImage(page, config) {
   }
 
   if (!generated) {
-    throw new Error('Image generation timed out');
+    throw new Error('RETRY:Image generation timed out');
   }
 
   console.error('Base image generated successfully (not downloading)');
   return true;
+}
+
+/**
+ * ベース画像を生成（リトライ機能付き）
+ */
+async function generateBaseImage(page, config) {
+  console.error('\n=== Generating Base Image ===');
+  console.error('Image prompt: ' + config.imagePrompt.substring(0, 80) + '...');
+
+  const maxRetries = config.maxRetries || 3;
+  const retryDelay = config.retryDelay || 5000;
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      if (attempt > 1) {
+        console.error(`\n=== Retry attempt ${attempt}/${maxRetries} for Base Image ===`);
+        // 新しいプロジェクトを開始
+        await startNewProject(page, config);
+        await page.waitForTimeout(3000);
+      }
+
+      const result = await generateBaseImageInternal(page, config);
+      return result;
+
+    } catch (e) {
+      lastError = e;
+      const isRetryable = e.message.includes('RETRY:') ||
+                          e.message.includes('生成できませんでした') ||
+                          e.message.includes('Could not generate') ||
+                          e.message.includes('timed out');
+
+      if (isRetryable && attempt < maxRetries) {
+        console.error(`Image generation failed (attempt ${attempt}/${maxRetries}): ${e.message}`);
+        console.error(`Waiting ${retryDelay / 1000}s before retry...`);
+        await page.waitForTimeout(retryDelay);
+      } else {
+        throw new Error(e.message.replace('RETRY:', ''));
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 /**
