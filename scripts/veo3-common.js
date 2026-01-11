@@ -1117,63 +1117,119 @@ async function extendScene(page, config, prompt, index) {
 
 /**
  * タイムラインの最後のクリップをクリック
- * 改善版: X座標が最も右にあるサムネイル画像をクリック
+ * 改善版: DOM構造から最後のクリップを探す
  */
 async function clickTimelineEnd(page) {
   console.error('Clicking last clip in timeline...');
 
-  // プラスボタンの位置を取得（基準点として使用）
-  const addClipBtn = await page.$(SELECTORS.addClipButton);
-  let addBtnY = null;
-  if (addClipBtn) {
-    try {
-      const box = await addClipBtn.boundingBox();
-      if (box) {
-        addBtnY = box.y;
-        console.error(`Add button Y position: ${addBtnY}`);
-      }
-    } catch (e) {}
-  }
-
-  // 方法1: タイムライン行にあるサムネイル画像の中で最も右にあるものをクリック
-  console.error('Finding rightmost clip image in timeline...');
+  // 方法1: プラスボタンの親要素から兄弟要素（クリップ）を探す
+  console.error('Finding last clip from DOM structure...');
   try {
-    const allImages = await page.$$('img');
-    let rightmostImage = null;
-    let maxX = -Infinity;
+    const lastClipInfo = await page.evaluate(() => {
+      // プラスボタンを探す
+      const addBtn = document.querySelector('#PINHOLE_ADD_CLIP_CARD_ID');
+      if (!addBtn) {
+        console.log('Add button not found');
+        return null;
+      }
 
-    for (const img of allImages) {
-      try {
-        const imgBox = await img.boundingBox();
-        if (!imgBox) continue;
+      // プラスボタンの親要素を辿って、クリップのコンテナを探す
+      let container = addBtn.parentElement;
+      let clips = [];
 
-        // タイムライン行にある画像を探す（Y座標で判定）
-        // プラスボタンのY座標を基準に、±100px以内
-        const isInTimelineRow = addBtnY
-          ? Math.abs(imgBox.y - addBtnY) < 100
-          : imgBox.y > 400 && imgBox.y < 700;  // フォールバック: 画面下部
+      // 親を辿りながらクリップを探す
+      for (let i = 0; i < 5; i++) {
+        if (!container) break;
 
-        // 画像サイズでフィルタ（小さすぎるものは除外）
-        const isValidSize = imgBox.width > 50 && imgBox.height > 30;
+        // 子要素の中からクリップらしいものを探す
+        const children = Array.from(container.children);
+        clips = children.filter(child => {
+          // プラスボタン自体は除外
+          if (child === addBtn || child.contains(addBtn)) return false;
+          // クリック可能な要素（div, button, など）で、サムネイルを含むもの
+          const hasImg = child.querySelector('img') !== null;
+          const hasVideo = child.querySelector('video') !== null;
+          return hasImg || hasVideo || child.getAttribute('role') === 'button';
+        });
 
-        if (isInTimelineRow && isValidSize) {
-          // X座標が最も右のものを探す
-          if (imgBox.x > maxX) {
-            maxX = imgBox.x;
-            rightmostImage = img;
+        if (clips.length > 0) {
+          console.log(`Found ${clips.length} clips at level ${i}`);
+          break;
+        }
+
+        container = container.parentElement;
+      }
+
+      if (clips.length === 0) {
+        // 別の方法: タイムラインエリア全体を探す
+        const timelineSelectors = [
+          '[class*="timeline"]',
+          '[class*="scene-builder"]',
+          '[class*="clip-list"]',
+        ];
+
+        for (const sel of timelineSelectors) {
+          const timeline = document.querySelector(sel);
+          if (timeline) {
+            // 画像を含む要素を探す
+            const imgContainers = Array.from(timeline.querySelectorAll('img')).map(img => {
+              // 画像の親要素でクリック可能なものを探す
+              let parent = img.parentElement;
+              for (let j = 0; j < 5; j++) {
+                if (!parent) break;
+                if (parent.getAttribute('role') === 'button' ||
+                    parent.tagName === 'BUTTON' ||
+                    parent.onclick ||
+                    parent.classList.length > 0) {
+                  return parent;
+                }
+                parent = parent.parentElement;
+              }
+              return img;
+            });
+
+            if (imgContainers.length > 0) {
+              clips = imgContainers;
+              console.log(`Found ${clips.length} image containers in timeline`);
+              break;
+            }
           }
         }
-      } catch (e) {}
-    }
+      }
 
-    if (rightmostImage) {
-      await rightmostImage.click({ force: true });
-      console.error(`Clicked rightmost image at X=${maxX}`);
-      await page.waitForTimeout(500);
-      return true;
+      if (clips.length === 0) {
+        return null;
+      }
+
+      // 最後のクリップの情報を返す
+      const lastClip = clips[clips.length - 1];
+      const rect = lastClip.getBoundingClientRect();
+
+      // クリック用にユニークな識別子を設定
+      const uniqueId = 'veo3-last-clip-' + Date.now();
+      lastClip.setAttribute('data-veo3-click-target', uniqueId);
+
+      return {
+        selector: `[data-veo3-click-target="${uniqueId}"]`,
+        tagName: lastClip.tagName,
+        className: lastClip.className,
+        clipCount: clips.length,
+        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+      };
+    });
+
+    if (lastClipInfo) {
+      console.error(`Found ${lastClipInfo.clipCount} clips, clicking last one: ${lastClipInfo.tagName}.${lastClipInfo.className}`);
+      const lastClip = await page.$(lastClipInfo.selector);
+      if (lastClip) {
+        await lastClip.click({ force: true });
+        console.error('Clicked last clip via DOM structure');
+        await page.waitForTimeout(500);
+        return true;
+      }
     }
   } catch (e) {
-    console.error('Rightmost image search failed: ' + e.message);
+    console.error('DOM structure search failed: ' + e.message);
   }
 
   // 方法2: 複数のクリップセレクタを試す
@@ -1182,6 +1238,7 @@ async function clickTimelineEnd(page) {
     '.sc-624db470-0',
     '[data-testid*="clip"]',
     '[data-testid*="scene"]',
+    '[class*="clip"]',
   ];
 
   for (const sel of clipSelectors) {
@@ -1191,27 +1248,27 @@ async function clickTimelineEnd(page) {
         console.error(`Found ${clips.length} clips with selector: ${sel}`);
         const lastClip = clips[clips.length - 1];
         await lastClip.click({ force: true });
-        console.error(`Clicked last clip`);
+        console.error('Clicked last clip');
         await page.waitForTimeout(500);
         return true;
       }
     } catch (e) {}
   }
 
-  // 方法3: キーボードナビゲーション（End キー + 右矢印）
+  // 方法3: キーボードナビゲーション
   console.error('Trying keyboard navigation...');
   try {
-    // まず何かクリックしてフォーカスを得る
+    const addClipBtn = await page.$(SELECTORS.addClipButton);
     if (addClipBtn) {
       const box = await addClipBtn.boundingBox();
       if (box) {
-        // プラスボタンの左側をクリック
+        // プラスボタンの左側をクリックしてフォーカス
         await page.mouse.click(box.x - 50, box.y + box.height / 2);
         await page.waitForTimeout(300);
       }
     }
 
-    // 右矢印を何度も押して確実に最後へ
+    // 右矢印を何度も押して最後へ
     for (let i = 0; i < 50; i++) {
       await page.keyboard.press('ArrowRight');
       await page.waitForTimeout(30);
