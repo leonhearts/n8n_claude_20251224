@@ -207,6 +207,8 @@ async function startNewProject(page, config) {
   await page.goto(targetUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(5000);
 
+  console.error('Current URL after navigation: ' + page.url());
+
   if (page.url().includes('accounts.google.com')) {
     throw new Error('Not logged in');
   }
@@ -219,14 +221,23 @@ async function startNewProject(page, config) {
   if (!config.projectUrl) {
     console.error('Creating new project...');
 
-    // SceneBuilderにいる場合は、まずFlowトップに戻る
+    // SceneBuilderやプロジェクトにリダイレクトされた場合、Flowトップに戻る
     let currentUrl = page.url();
-    if (currentUrl.includes('/scenes/') || currentUrl.includes('/project/')) {
-      console.error('Already in a project, navigating to Flow top page...');
-      await page.goto('https://labs.google/fx/tools/flow', { waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForTimeout(3000);
-      await dismissFileDialog(page);
-      await dismissConsentPopup(page);
+    console.error('Current URL: ' + currentUrl);
+
+    // 最大3回リトライしてFlowトップページを確保
+    for (let retry = 0; retry < 3; retry++) {
+      currentUrl = page.url();
+      if (currentUrl.includes('/scenes/') || currentUrl.includes('/project/')) {
+        console.error(`Redirected to project (attempt ${retry + 1}/3), navigating to Flow top page...`);
+        await page.goto('https://labs.google/fx/tools/flow', { waitUntil: 'domcontentloaded', timeout: 30000 });
+        await page.waitForTimeout(3000);
+        await dismissFileDialog(page);
+        await dismissConsentPopup(page);
+      } else {
+        console.error('On Flow top page: ' + currentUrl);
+        break;
+      }
     }
 
     // 「新しいプロジェクト」ボタンをクリック（リトライ付き）
