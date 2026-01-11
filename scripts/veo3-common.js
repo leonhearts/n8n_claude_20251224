@@ -192,14 +192,14 @@ async function findElement(page, selectors) {
  * プロジェクトを開始（既存または新規）
  */
 async function startNewProject(page, config) {
-  let targetUrl = config.projectUrl || 'https://labs.google/fx/tools/flow';
+  // 新規プロジェクトの場合は必ずFlowのトップページから開始
+  const targetUrl = config.projectUrl || 'https://labs.google/fx/tools/flow';
 
-  if (targetUrl.includes('/scenes/')) {
-    const baseUrl = targetUrl.replace(/\/scenes\/.*$/, '');
+  if (config.projectUrl && config.projectUrl.includes('/scenes/')) {
+    const baseUrl = config.projectUrl.replace(/\/scenes\/.*$/, '');
     console.error('SceneBuilder URL detected, converting to project URL:');
-    console.error('  From: ' + targetUrl);
+    console.error('  From: ' + config.projectUrl);
     console.error('  To: ' + baseUrl);
-    targetUrl = baseUrl;
   }
 
   console.error('Opening: ' + targetUrl);
@@ -211,27 +211,74 @@ async function startNewProject(page, config) {
     throw new Error('Not logged in');
   }
 
-  const currentUrl = page.url();
-  if (currentUrl.includes('/scenes/')) {
-    console.error('Redirected to SceneBuilder, navigating back to project...');
-    const projectBaseUrl = currentUrl.replace(/\/scenes\/.*$/, '');
-    await page.goto(projectBaseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    await page.waitForTimeout(3000);
-  }
-
   await dismissFileDialog(page);
   await dismissConsentPopup(page);
   await dismissNotifications(page);
 
+  // 新規プロジェクトを作成する場合
   if (!config.projectUrl) {
-    const newBtn = await findElement(page, SELECTORS.newProjectButton);
-    if (newBtn) {
-      await newBtn.click();
-      await page.waitForTimeout(5000);
+    console.error('Creating new project...');
+
+    // SceneBuilderにいる場合は、まずFlowトップに戻る
+    let currentUrl = page.url();
+    if (currentUrl.includes('/scenes/') || currentUrl.includes('/project/')) {
+      console.error('Already in a project, navigating to Flow top page...');
+      await page.goto('https://labs.google/fx/tools/flow', { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(3000);
+      await dismissFileDialog(page);
+      await dismissConsentPopup(page);
+    }
+
+    // 「新しいプロジェクト」ボタンをクリック（リトライ付き）
+    let newBtnClicked = false;
+    for (let i = 0; i < 5; i++) {
+      const newBtn = await findElement(page, SELECTORS.newProjectButton);
+      if (newBtn) {
+        await newBtn.click();
+        console.error('Clicked "New Project" button');
+        await page.waitForTimeout(5000);
+        newBtnClicked = true;
+        break;
+      }
+      console.error(`"New Project" button not found, retrying... (${i + 1}/5)`);
+      await page.waitForTimeout(2000);
+    }
+
+    if (!newBtnClicked) {
+      // ボタンが見つからない場合、現在のURLをチェック
+      currentUrl = page.url();
+      if (currentUrl.includes('/scenes/') || currentUrl.includes('/project/')) {
+        console.error('WARNING: Could not find "New Project" button, but already in a project');
+        // 既にプロジェクトにいる場合は続行（ただし警告を出す）
+      } else {
+        throw new Error('RETRY:Could not find "New Project" button');
+      }
+    }
+
+    // 新しいプロジェクトが作成されたか確認（Videos/Imagesボタンが表示されるまで待機）
+    console.error('Waiting for new project to load...');
+    for (let i = 0; i < 10; i++) {
+      const imagesBtn = await page.$(SELECTORS.imagesButton);
+      const videosBtn = await page.$(SELECTORS.videosButton);
+      if (imagesBtn || videosBtn) {
+        console.error('New project loaded successfully');
+        break;
+      }
+      await page.waitForTimeout(1000);
     }
   } else {
     console.error('Using existing project');
     console.error('Waiting for page content to load...');
+
+    // 既存プロジェクトの場合、SceneBuilderからプロジェクト画面に戻る
+    const currentUrl = page.url();
+    if (currentUrl.includes('/scenes/')) {
+      console.error('Redirected to SceneBuilder, navigating back to project...');
+      const projectBaseUrl = currentUrl.replace(/\/scenes\/.*$/, '');
+      await page.goto(projectBaseUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      await page.waitForTimeout(3000);
+    }
+
     await page.waitForTimeout(6000);
   }
 }
