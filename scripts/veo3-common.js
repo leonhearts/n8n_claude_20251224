@@ -1117,13 +1117,13 @@ async function extendScene(page, config, prompt, index) {
 
 /**
  * タイムラインの最後のクリップをクリック
- * 改善版: DOM構造から最後のクリップを探す
+ * 改善版: プラスボタンの直前の兄弟要素を探す
  */
 async function clickTimelineEnd(page) {
   console.error('Clicking last clip in timeline...');
 
-  // 方法1: プラスボタンの親要素から兄弟要素（クリップ）を探す
-  console.error('Finding last clip from DOM structure...');
+  // 方法1: プラスボタンの直前の兄弟要素（previousElementSibling）を探す
+  console.error('Finding clip before add button...');
   try {
     const lastClipInfo = await page.evaluate(() => {
       // プラスボタンを探す
@@ -1133,97 +1133,68 @@ async function clickTimelineEnd(page) {
         return null;
       }
 
-      // プラスボタンの親要素を辿って、クリップのコンテナを探す
-      let container = addBtn.parentElement;
-      let clips = [];
+      // プラスボタンの直前の兄弟要素を探す
+      let prevSibling = addBtn.previousElementSibling;
 
-      // 親を辿りながらクリップを探す
-      for (let i = 0; i < 5; i++) {
-        if (!container) break;
+      // 直前の兄弟がクリップらしいか確認
+      if (prevSibling) {
+        const hasImg = prevSibling.querySelector('img') !== null;
+        const hasVideo = prevSibling.querySelector('video') !== null;
 
-        // 子要素の中からクリップらしいものを探す
-        const children = Array.from(container.children);
-        clips = children.filter(child => {
-          // プラスボタン自体は除外
-          if (child === addBtn || child.contains(addBtn)) return false;
-          // クリック可能な要素（div, button, など）で、サムネイルを含むもの
-          const hasImg = child.querySelector('img') !== null;
-          const hasVideo = child.querySelector('video') !== null;
-          return hasImg || hasVideo || child.getAttribute('role') === 'button';
-        });
+        if (hasImg || hasVideo) {
+          const rect = prevSibling.getBoundingClientRect();
+          const uniqueId = 'veo3-last-clip-' + Date.now();
+          prevSibling.setAttribute('data-veo3-click-target', uniqueId);
 
-        if (clips.length > 0) {
-          console.log(`Found ${clips.length} clips at level ${i}`);
-          break;
+          return {
+            selector: `[data-veo3-click-target="${uniqueId}"]`,
+            tagName: prevSibling.tagName,
+            className: prevSibling.className,
+            method: 'previousSibling',
+            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+          };
         }
-
-        container = container.parentElement;
       }
 
-      if (clips.length === 0) {
-        // 別の方法: タイムラインエリア全体を探す
-        const timelineSelectors = [
-          '[class*="timeline"]',
-          '[class*="scene-builder"]',
-          '[class*="clip-list"]',
-        ];
+      // 直前の兄弟がない場合、親要素の最後の子要素を探す
+      let container = addBtn.parentElement;
+      if (container) {
+        const children = Array.from(container.children);
+        // プラスボタンを除外して、画像/動画を含む最後の要素を探す
+        for (let i = children.length - 1; i >= 0; i--) {
+          const child = children[i];
+          if (child === addBtn || child.id === 'PINHOLE_ADD_CLIP_CARD_ID') continue;
 
-        for (const sel of timelineSelectors) {
-          const timeline = document.querySelector(sel);
-          if (timeline) {
-            // 画像を含む要素を探す
-            const imgContainers = Array.from(timeline.querySelectorAll('img')).map(img => {
-              // 画像の親要素でクリック可能なものを探す
-              let parent = img.parentElement;
-              for (let j = 0; j < 5; j++) {
-                if (!parent) break;
-                if (parent.getAttribute('role') === 'button' ||
-                    parent.tagName === 'BUTTON' ||
-                    parent.onclick ||
-                    parent.classList.length > 0) {
-                  return parent;
-                }
-                parent = parent.parentElement;
-              }
-              return img;
-            });
+          const hasImg = child.querySelector('img') !== null;
+          const hasVideo = child.querySelector('video') !== null;
 
-            if (imgContainers.length > 0) {
-              clips = imgContainers;
-              console.log(`Found ${clips.length} image containers in timeline`);
-              break;
-            }
+          if (hasImg || hasVideo) {
+            const rect = child.getBoundingClientRect();
+            const uniqueId = 'veo3-last-clip-' + Date.now();
+            child.setAttribute('data-veo3-click-target', uniqueId);
+
+            return {
+              selector: `[data-veo3-click-target="${uniqueId}"]`,
+              tagName: child.tagName,
+              className: child.className,
+              method: 'lastChild',
+              childIndex: i,
+              totalChildren: children.length,
+              rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
+            };
           }
         }
       }
 
-      if (clips.length === 0) {
-        return null;
-      }
-
-      // 最後のクリップの情報を返す
-      const lastClip = clips[clips.length - 1];
-      const rect = lastClip.getBoundingClientRect();
-
-      // クリック用にユニークな識別子を設定
-      const uniqueId = 'veo3-last-clip-' + Date.now();
-      lastClip.setAttribute('data-veo3-click-target', uniqueId);
-
-      return {
-        selector: `[data-veo3-click-target="${uniqueId}"]`,
-        tagName: lastClip.tagName,
-        className: lastClip.className,
-        clipCount: clips.length,
-        rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-      };
+      return null;
     });
 
     if (lastClipInfo) {
-      console.error(`Found ${lastClipInfo.clipCount} clips, clicking last one: ${lastClipInfo.tagName}.${lastClipInfo.className}`);
+      console.error(`Found clip via ${lastClipInfo.method}: ${lastClipInfo.tagName} at (${lastClipInfo.rect.x}, ${lastClipInfo.rect.y})`);
       const lastClip = await page.$(lastClipInfo.selector);
       if (lastClip) {
         await lastClip.click({ force: true });
-        console.error('Clicked last clip via DOM structure');
+        console.error('Clicked last clip');
         await page.waitForTimeout(500);
         return true;
       }
@@ -1238,7 +1209,6 @@ async function clickTimelineEnd(page) {
     '.sc-624db470-0',
     '[data-testid*="clip"]',
     '[data-testid*="scene"]',
-    '[class*="clip"]',
   ];
 
   for (const sel of clipSelectors) {
@@ -1262,13 +1232,11 @@ async function clickTimelineEnd(page) {
     if (addClipBtn) {
       const box = await addClipBtn.boundingBox();
       if (box) {
-        // プラスボタンの左側をクリックしてフォーカス
         await page.mouse.click(box.x - 50, box.y + box.height / 2);
         await page.waitForTimeout(300);
       }
     }
 
-    // 右矢印を何度も押して最後へ
     for (let i = 0; i < 50; i++) {
       await page.keyboard.press('ArrowRight');
       await page.waitForTimeout(30);
