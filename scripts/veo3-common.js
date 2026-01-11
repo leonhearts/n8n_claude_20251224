@@ -1117,10 +1117,72 @@ async function extendScene(page, config, prompt, index) {
 
 /**
  * タイムラインの最後のクリップをクリック
- * 改善版: 複数のセレクタとキーボードナビゲーションを使用
+ * 改善版: タイムラインを右端までスクロールしてから最後のクリップをクリック
  */
 async function clickTimelineEnd(page) {
   console.error('Clicking last clip in timeline...');
+
+  // まずタイムラインを右端までスクロール
+  console.error('Scrolling timeline to the end...');
+  try {
+    // タイムラインのスクロールコンテナを探す
+    const scrollContainerSelectors = [
+      '[class*="timeline"][class*="scroll"]',
+      '[class*="timeline"] [style*="overflow"]',
+      '[class*="scene-builder"] [style*="overflow"]',
+      '.sc-605710a8-2',  // 可能性のあるクラス
+    ];
+
+    let scrolled = false;
+    for (const sel of scrollContainerSelectors) {
+      try {
+        const scrollContainer = await page.$(sel);
+        if (scrollContainer) {
+          await scrollContainer.evaluate(el => {
+            el.scrollLeft = el.scrollWidth;
+          });
+          console.error(`Scrolled timeline with selector: ${sel}`);
+          scrolled = true;
+          break;
+        }
+      } catch (e) {}
+    }
+
+    // 汎用的なスクロール方法: タイムライン要素全体を探してスクロール
+    if (!scrolled) {
+      await page.evaluate(() => {
+        // タイムライン領域を探す（複数の方法）
+        const candidates = [
+          ...document.querySelectorAll('[class*="timeline"]'),
+          ...document.querySelectorAll('[class*="scene"]'),
+        ];
+        for (const el of candidates) {
+          if (el.scrollWidth > el.clientWidth) {
+            el.scrollLeft = el.scrollWidth;
+            console.log('Scrolled element:', el.className);
+            return;
+          }
+        }
+        // 親要素も試す
+        const timelineArea = document.querySelector('[class*="timeline"]');
+        if (timelineArea) {
+          let parent = timelineArea.parentElement;
+          while (parent) {
+            if (parent.scrollWidth > parent.clientWidth) {
+              parent.scrollLeft = parent.scrollWidth;
+              console.log('Scrolled parent:', parent.className);
+              return;
+            }
+            parent = parent.parentElement;
+          }
+        }
+      });
+      console.error('Attempted generic timeline scroll');
+    }
+    await page.waitForTimeout(500);
+  } catch (e) {
+    console.error('Scroll attempt failed: ' + e.message);
+  }
 
   // 方法1: 複数のセレクタを試す
   const clipSelectors = [
@@ -1162,16 +1224,45 @@ async function clickTimelineEnd(page) {
     return true;
   }
 
-  // 方法2: プラスボタンの左側をクリック（プラスボタンを基準に）
-  console.error('No clips found with standard selectors, trying position-based click...');
+  // 方法2: プラスボタンの左側のクリップを探す
+  console.error('No clips found with standard selectors, trying to find clip near add button...');
   const addClipBtn = await page.$(SELECTORS.addClipButton);
   if (addClipBtn) {
     try {
-      const box = await addClipBtn.boundingBox();
-      if (box) {
-        // プラスボタンの左側（80px左）をクリック
-        const clickX = box.x - 80;
-        const clickY = box.y + box.height / 2;
+      const addBtnBox = await addClipBtn.boundingBox();
+      if (addBtnBox) {
+        // プラスボタンの左にあるクリップ（サムネイル画像）を探す
+        const allImages = await page.$$('img');
+        let closestImage = null;
+        let closestDistance = Infinity;
+
+        for (const img of allImages) {
+          try {
+            const imgBox = await img.boundingBox();
+            if (imgBox && Math.abs(imgBox.y - addBtnBox.y) < 100) {
+              // 同じ行にある画像で、プラスボタンより左にあるもの
+              if (imgBox.x < addBtnBox.x) {
+                const distance = addBtnBox.x - imgBox.x;
+                if (distance < closestDistance && distance > 10) {
+                  closestDistance = distance;
+                  closestImage = img;
+                }
+              }
+            }
+          } catch (e) {}
+        }
+
+        if (closestImage) {
+          await closestImage.scrollIntoViewIfNeeded();
+          await closestImage.click({ force: true });
+          console.error(`Clicked closest image to add button (distance: ${closestDistance}px)`);
+          await page.waitForTimeout(500);
+          return true;
+        }
+
+        // 画像が見つからない場合はプラスボタンの左側をクリック
+        const clickX = addBtnBox.x - 80;
+        const clickY = addBtnBox.y + addBtnBox.height / 2;
         console.error(`Clicking position (${clickX}, ${clickY}) - left of add button`);
         await page.mouse.click(clickX, clickY);
         await page.waitForTimeout(500);
@@ -1182,8 +1273,8 @@ async function clickTimelineEnd(page) {
     }
   }
 
-  // 方法3: キーボードナビゲーション（End キー）
-  console.error('Trying keyboard navigation (End key)...');
+  // 方法3: キーボードナビゲーション（End キー + 右矢印）
+  console.error('Trying keyboard navigation...');
   try {
     // タイムラインエリアにフォーカス
     const timelineArea = await page.$('[class*="timeline"]');
@@ -1192,14 +1283,14 @@ async function clickTimelineEnd(page) {
       await page.waitForTimeout(300);
     }
 
-    // End キーを押して最後に移動
+    // Ctrl+End または End キーを押して最後に移動
     await page.keyboard.press('End');
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(300);
 
-    // 右矢印を数回押して確実に最後へ
-    for (let i = 0; i < 30; i++) {
+    // 右矢印を何度も押して確実に最後へ
+    for (let i = 0; i < 50; i++) {
       await page.keyboard.press('ArrowRight');
-      await page.waitForTimeout(50);
+      await page.waitForTimeout(30);
     }
     await page.waitForTimeout(500);
     console.error('Used keyboard navigation to reach end');
