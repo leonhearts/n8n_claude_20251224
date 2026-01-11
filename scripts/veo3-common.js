@@ -1117,80 +1117,108 @@ async function extendScene(page, config, prompt, index) {
 
 /**
  * タイムラインの最後のクリップをクリック
- * 改善版: プラスボタンの直前の兄弟要素を探す
+ * 改善版: 親要素内でimg/videoを持つ最後の子要素を探す
  */
 async function clickTimelineEnd(page) {
   console.error('Clicking last clip in timeline...');
 
-  // 方法1: プラスボタンの直前の兄弟要素（previousElementSibling）を探す
-  console.error('Finding clip before add button...');
+  // 方法1: プラスボタンの親要素内で、img/videoを持つ最後の子要素を探す
+  console.error('Finding last clip with img/video...');
   try {
     const lastClipInfo = await page.evaluate(() => {
       // プラスボタンを探す
       const addBtn = document.querySelector('#PINHOLE_ADD_CLIP_CARD_ID');
       if (!addBtn) {
-        console.log('Add button not found');
-        return null;
+        return { error: 'Add button not found' };
       }
 
-      // プラスボタンの直前の兄弟要素を探す
-      let prevSibling = addBtn.previousElementSibling;
+      // プラスボタンの親要素
+      const parent = addBtn.parentElement;
+      const debugInfo = {
+        addBtnTagName: addBtn.tagName,
+        addBtnId: addBtn.id,
+        parentTagName: parent ? parent.tagName : 'null',
+        parentClassName: parent ? parent.className : 'null',
+        parentChildCount: parent ? parent.children.length : 0,
+        children: []
+      };
 
-      // 直前の兄弟がクリップらしいか確認
-      if (prevSibling) {
-        const hasImg = prevSibling.querySelector('img') !== null;
-        const hasVideo = prevSibling.querySelector('video') !== null;
+      if (!parent) {
+        return { error: 'Parent not found', debug: debugInfo };
+      }
+
+      const children = Array.from(parent.children);
+
+      // 全子要素の情報を収集（デバッグ用）
+      debugInfo.children = children.map((child, idx) => ({
+        index: idx,
+        tagName: child.tagName,
+        id: child.id || '',
+        className: (child.className || '').substring(0, 50),
+        hasImg: child.querySelector('img') !== null,
+        hasVideo: child.querySelector('video') !== null,
+      }));
+
+      // プラスボタンのインデックス
+      const addBtnIndex = children.findIndex(c => c === addBtn || c.id === 'PINHOLE_ADD_CLIP_CARD_ID');
+      debugInfo.addBtnIndex = addBtnIndex;
+
+      // 重要: img または video を持つ「最後の」子要素を探す（プラスボタンより前の要素のみ）
+      let lastClipElement = null;
+      let lastClipIndex = -1;
+
+      for (let i = 0; i < children.length; i++) {
+        // プラスボタン自体はスキップ
+        if (children[i] === addBtn || children[i].id === 'PINHOLE_ADD_CLIP_CARD_ID') {
+          continue;
+        }
+
+        const hasImg = children[i].querySelector('img') !== null;
+        const hasVideo = children[i].querySelector('video') !== null;
 
         if (hasImg || hasVideo) {
-          const rect = prevSibling.getBoundingClientRect();
-          const uniqueId = 'veo3-last-clip-' + Date.now();
-          prevSibling.setAttribute('data-veo3-click-target', uniqueId);
-
-          return {
-            selector: `[data-veo3-click-target="${uniqueId}"]`,
-            tagName: prevSibling.tagName,
-            className: prevSibling.className,
-            method: 'previousSibling',
-            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-          };
+          lastClipElement = children[i];
+          lastClipIndex = i;
         }
       }
 
-      // 直前の兄弟がない場合、親要素の最後の子要素を探す
-      let container = addBtn.parentElement;
-      if (container) {
-        const children = Array.from(container.children);
-        // プラスボタンを除外して、画像/動画を含む最後の要素を探す
-        for (let i = children.length - 1; i >= 0; i--) {
-          const child = children[i];
-          if (child === addBtn || child.id === 'PINHOLE_ADD_CLIP_CARD_ID') continue;
+      if (lastClipElement) {
+        const rect = lastClipElement.getBoundingClientRect();
+        const uniqueId = 'veo3-last-clip-' + Date.now();
+        lastClipElement.setAttribute('data-veo3-click-target', uniqueId);
 
-          const hasImg = child.querySelector('img') !== null;
-          const hasVideo = child.querySelector('video') !== null;
-
-          if (hasImg || hasVideo) {
-            const rect = child.getBoundingClientRect();
-            const uniqueId = 'veo3-last-clip-' + Date.now();
-            child.setAttribute('data-veo3-click-target', uniqueId);
-
-            return {
-              selector: `[data-veo3-click-target="${uniqueId}"]`,
-              tagName: child.tagName,
-              className: child.className,
-              method: 'lastChild',
-              childIndex: i,
-              totalChildren: children.length,
-              rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
-            };
-          }
-        }
+        return {
+          selector: `[data-veo3-click-target="${uniqueId}"]`,
+          tagName: lastClipElement.tagName,
+          className: lastClipElement.className,
+          method: 'lastWithMedia',
+          clipIndex: lastClipIndex,
+          addBtnIndex: addBtnIndex,
+          totalClipsWithMedia: debugInfo.children.filter(c => c.hasImg || c.hasVideo).length,
+          rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+          debug: debugInfo
+        };
       }
 
-      return null;
+      return { error: 'No clip with img/video found', debug: debugInfo };
     });
 
-    if (lastClipInfo) {
-      console.error(`Found clip via ${lastClipInfo.method}: ${lastClipInfo.tagName} at (${lastClipInfo.rect.x}, ${lastClipInfo.rect.y})`);
+    // デバッグ情報をログ
+    if (lastClipInfo.debug) {
+      console.error('DOM Structure Debug:');
+      console.error(`  Parent: ${lastClipInfo.debug.parentTagName}.${lastClipInfo.debug.parentClassName}`);
+      console.error(`  Child count: ${lastClipInfo.debug.parentChildCount}`);
+      console.error(`  Add button index: ${lastClipInfo.debug.addBtnIndex}`);
+      if (lastClipInfo.debug.children) {
+        lastClipInfo.debug.children.forEach(c => {
+          const mediaInfo = (c.hasImg || c.hasVideo) ? ' [MEDIA]' : '';
+          console.error(`    [${c.index}] ${c.tagName} id=${c.id} hasImg=${c.hasImg} hasVideo=${c.hasVideo}${mediaInfo}`);
+        });
+      }
+    }
+
+    if (lastClipInfo.selector) {
+      console.error(`Found last clip: index=${lastClipInfo.clipIndex}, totalClips=${lastClipInfo.totalClipsWithMedia}, at (${Math.round(lastClipInfo.rect.x)}, ${Math.round(lastClipInfo.rect.y)})`);
       const lastClip = await page.$(lastClipInfo.selector);
       if (lastClip) {
         await lastClip.click({ force: true });
@@ -1198,6 +1226,8 @@ async function clickTimelineEnd(page) {
         await page.waitForTimeout(500);
         return true;
       }
+    } else {
+      console.error('No clip found: ' + (lastClipInfo.error || 'unknown'));
     }
   } catch (e) {
     console.error('DOM structure search failed: ' + e.message);
