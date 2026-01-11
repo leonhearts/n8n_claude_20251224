@@ -1119,13 +1119,13 @@ async function extendScene(page, config, prompt, index) {
 
 /**
  * タイムラインの最後のクリップをクリック
- * 改善版: 親要素内でimg/videoを持つ最後の子要素を探す
+ * 改善版: X座標が最も右にあるメディア要素を探す
  */
 async function clickTimelineEnd(page) {
   console.error('Clicking last clip in timeline...');
 
-  // 方法1: プラスボタンの親要素内で、img/videoを持つ最後の子要素を探す
-  console.error('Finding last clip with img/video...');
+  // 方法1: プラスボタンの親要素内で、X座標が最も右にあるメディア要素を探す
+  console.error('Finding rightmost clip with img/video...');
   try {
     const lastClipInfo = await page.evaluate(() => {
       // プラスボタンを探す
@@ -1151,23 +1151,29 @@ async function clickTimelineEnd(page) {
 
       const children = Array.from(parent.children);
 
-      // 全子要素の情報を収集（デバッグ用）
-      debugInfo.children = children.map((child, idx) => ({
-        index: idx,
-        tagName: child.tagName,
-        id: child.id || '',
-        className: (child.className || '').substring(0, 50),
-        hasImg: child.querySelector('img') !== null,
-        hasVideo: child.querySelector('video') !== null,
-      }));
+      // 全子要素の情報を収集（デバッグ用）- X座標も含める
+      debugInfo.children = children.map((child, idx) => {
+        const rect = child.getBoundingClientRect();
+        return {
+          index: idx,
+          tagName: child.tagName,
+          id: child.id || '',
+          className: (child.className || '').substring(0, 50),
+          hasImg: child.querySelector('img') !== null,
+          hasVideo: child.querySelector('video') !== null,
+          x: Math.round(rect.x),
+          width: Math.round(rect.width),
+        };
+      });
 
       // プラスボタンのインデックス
       const addBtnIndex = children.findIndex(c => c === addBtn || c.id === 'PINHOLE_ADD_CLIP_CARD_ID');
       debugInfo.addBtnIndex = addBtnIndex;
 
-      // 重要: img または video を持つ「最後の」子要素を探す（プラスボタンより前の要素のみ）
-      let lastClipElement = null;
-      let lastClipIndex = -1;
+      // 重要: X座標が最も右にあるメディア要素を探す（プラスボタンを除く）
+      let rightmostClipElement = null;
+      let rightmostClipIndex = -1;
+      let rightmostX = -Infinity;
 
       for (let i = 0; i < children.length; i++) {
         // プラスボタン自体はスキップ
@@ -1179,22 +1185,27 @@ async function clickTimelineEnd(page) {
         const hasVideo = children[i].querySelector('video') !== null;
 
         if (hasImg || hasVideo) {
-          lastClipElement = children[i];
-          lastClipIndex = i;
+          const rect = children[i].getBoundingClientRect();
+          // X座標が最も右の要素を選ぶ
+          if (rect.x > rightmostX) {
+            rightmostX = rect.x;
+            rightmostClipElement = children[i];
+            rightmostClipIndex = i;
+          }
         }
       }
 
-      if (lastClipElement) {
-        const rect = lastClipElement.getBoundingClientRect();
+      if (rightmostClipElement) {
+        const rect = rightmostClipElement.getBoundingClientRect();
         const uniqueId = 'veo3-last-clip-' + Date.now();
-        lastClipElement.setAttribute('data-veo3-click-target', uniqueId);
+        rightmostClipElement.setAttribute('data-veo3-click-target', uniqueId);
 
         return {
           selector: `[data-veo3-click-target="${uniqueId}"]`,
-          tagName: lastClipElement.tagName,
-          className: lastClipElement.className,
-          method: 'lastWithMedia',
-          clipIndex: lastClipIndex,
+          tagName: rightmostClipElement.tagName,
+          className: rightmostClipElement.className,
+          method: 'rightmostWithMedia',
+          clipIndex: rightmostClipIndex,
           addBtnIndex: addBtnIndex,
           totalClipsWithMedia: debugInfo.children.filter(c => c.hasImg || c.hasVideo).length,
           rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
@@ -1205,6 +1216,16 @@ async function clickTimelineEnd(page) {
       return { error: 'No clip with img/video found', debug: debugInfo };
     });
 
+    // デバッグ情報をファイルに保存
+    const fs = require('fs');
+    const debugLogPath = '/tmp/veo3-timeline-debug.json';
+    try {
+      fs.writeFileSync(debugLogPath, JSON.stringify(lastClipInfo, null, 2));
+      console.error(`Debug info saved to ${debugLogPath}`);
+    } catch (e) {
+      console.error('Could not save debug info: ' + e.message);
+    }
+
     // デバッグ情報をログ
     if (lastClipInfo.debug) {
       console.error('DOM Structure Debug:');
@@ -1214,13 +1235,13 @@ async function clickTimelineEnd(page) {
       if (lastClipInfo.debug.children) {
         lastClipInfo.debug.children.forEach(c => {
           const mediaInfo = (c.hasImg || c.hasVideo) ? ' [MEDIA]' : '';
-          console.error(`    [${c.index}] ${c.tagName} id=${c.id} hasImg=${c.hasImg} hasVideo=${c.hasVideo}${mediaInfo}`);
+          console.error(`    [${c.index}] ${c.tagName} x=${c.x} hasImg=${c.hasImg} hasVideo=${c.hasVideo}${mediaInfo}`);
         });
       }
     }
 
     if (lastClipInfo.selector) {
-      console.error(`Found last clip: index=${lastClipInfo.clipIndex}, totalClips=${lastClipInfo.totalClipsWithMedia}, at (${Math.round(lastClipInfo.rect.x)}, ${Math.round(lastClipInfo.rect.y)})`);
+      console.error(`Found rightmost clip: index=${lastClipInfo.clipIndex}, x=${Math.round(lastClipInfo.rect.x)}, totalClips=${lastClipInfo.totalClipsWithMedia}`);
       const lastClip = await page.$(lastClipInfo.selector);
       if (lastClip) {
         await lastClip.click({ force: true });
