@@ -1119,13 +1119,13 @@ async function extendScene(page, config, prompt, index) {
 
 /**
  * タイムラインの最後のクリップをクリック
- * 改善版: X座標が最も右にあるメディア要素を探す
+ * 改善版: プラスボタンからpreviousElementSiblingをたどってメディアを持つ要素を探す
  */
 async function clickTimelineEnd(page) {
   console.error('Clicking last clip in timeline...');
 
-  // 方法1: プラスボタンの親要素内で、X座標が最も右にあるメディア要素を探す
-  console.error('Finding rightmost clip with img/video...');
+  // 方法1: プラスボタンのpreviousElementSiblingをたどる
+  console.error('Finding clip via previousElementSibling...');
   try {
     const lastClipInfo = await page.evaluate(() => {
       // プラスボタンを探す
@@ -1134,86 +1134,51 @@ async function clickTimelineEnd(page) {
         return { error: 'Add button not found' };
       }
 
-      // プラスボタンの親要素
-      const parent = addBtn.parentElement;
       const debugInfo = {
         addBtnTagName: addBtn.tagName,
         addBtnId: addBtn.id,
-        parentTagName: parent ? parent.tagName : 'null',
-        parentClassName: parent ? parent.className : 'null',
-        parentChildCount: parent ? parent.children.length : 0,
-        children: []
+        siblings: []
       };
 
-      if (!parent) {
-        return { error: 'Parent not found', debug: debugInfo };
-      }
+      // previousElementSiblingをたどってメディアを持つ要素を探す
+      let current = addBtn.previousElementSibling;
+      let siblingIndex = 0;
 
-      const children = Array.from(parent.children);
+      while (current) {
+        const hasImg = current.querySelector('img') !== null;
+        const hasVideo = current.querySelector('video') !== null;
 
-      // 全子要素の情報を収集（デバッグ用）- X座標も含める
-      debugInfo.children = children.map((child, idx) => {
-        const rect = child.getBoundingClientRect();
-        return {
-          index: idx,
-          tagName: child.tagName,
-          id: child.id || '',
-          className: (child.className || '').substring(0, 50),
-          hasImg: child.querySelector('img') !== null,
-          hasVideo: child.querySelector('video') !== null,
-          x: Math.round(rect.x),
-          width: Math.round(rect.width),
-        };
-      });
+        debugInfo.siblings.push({
+          index: siblingIndex,
+          tagName: current.tagName,
+          id: current.id || '',
+          className: (current.className || '').substring(0, 50),
+          hasImg: hasImg,
+          hasVideo: hasVideo,
+        });
 
-      // プラスボタンのインデックス
-      const addBtnIndex = children.findIndex(c => c === addBtn || c.id === 'PINHOLE_ADD_CLIP_CARD_ID');
-      debugInfo.addBtnIndex = addBtnIndex;
-
-      // 重要: X座標が最も右にあるメディア要素を探す（プラスボタンを除く）
-      let rightmostClipElement = null;
-      let rightmostClipIndex = -1;
-      let rightmostX = -Infinity;
-
-      for (let i = 0; i < children.length; i++) {
-        // プラスボタン自体はスキップ
-        if (children[i] === addBtn || children[i].id === 'PINHOLE_ADD_CLIP_CARD_ID') {
-          continue;
-        }
-
-        const hasImg = children[i].querySelector('img') !== null;
-        const hasVideo = children[i].querySelector('video') !== null;
-
+        // メディアを持つ最初の要素（プラスボタンに最も近い）を選ぶ
         if (hasImg || hasVideo) {
-          const rect = children[i].getBoundingClientRect();
-          // X座標が最も右の要素を選ぶ
-          if (rect.x > rightmostX) {
-            rightmostX = rect.x;
-            rightmostClipElement = children[i];
-            rightmostClipIndex = i;
-          }
+          const rect = current.getBoundingClientRect();
+          const uniqueId = 'veo3-last-clip-' + Date.now();
+          current.setAttribute('data-veo3-click-target', uniqueId);
+
+          return {
+            selector: `[data-veo3-click-target="${uniqueId}"]`,
+            tagName: current.tagName,
+            className: current.className,
+            method: 'previousSibling',
+            siblingDistance: siblingIndex,
+            rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+            debug: debugInfo
+          };
         }
+
+        current = current.previousElementSibling;
+        siblingIndex++;
       }
 
-      if (rightmostClipElement) {
-        const rect = rightmostClipElement.getBoundingClientRect();
-        const uniqueId = 'veo3-last-clip-' + Date.now();
-        rightmostClipElement.setAttribute('data-veo3-click-target', uniqueId);
-
-        return {
-          selector: `[data-veo3-click-target="${uniqueId}"]`,
-          tagName: rightmostClipElement.tagName,
-          className: rightmostClipElement.className,
-          method: 'rightmostWithMedia',
-          clipIndex: rightmostClipIndex,
-          addBtnIndex: addBtnIndex,
-          totalClipsWithMedia: debugInfo.children.filter(c => c.hasImg || c.hasVideo).length,
-          rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
-          debug: debugInfo
-        };
-      }
-
-      return { error: 'No clip with img/video found', debug: debugInfo };
+      return { error: 'No clip with img/video found in siblings', debug: debugInfo };
     });
 
     // デバッグ情報をファイルに保存
@@ -1228,20 +1193,17 @@ async function clickTimelineEnd(page) {
 
     // デバッグ情報をログ
     if (lastClipInfo.debug) {
-      console.error('DOM Structure Debug:');
-      console.error(`  Parent: ${lastClipInfo.debug.parentTagName}.${lastClipInfo.debug.parentClassName}`);
-      console.error(`  Child count: ${lastClipInfo.debug.parentChildCount}`);
-      console.error(`  Add button index: ${lastClipInfo.debug.addBtnIndex}`);
-      if (lastClipInfo.debug.children) {
-        lastClipInfo.debug.children.forEach(c => {
-          const mediaInfo = (c.hasImg || c.hasVideo) ? ' [MEDIA]' : '';
-          console.error(`    [${c.index}] ${c.tagName} x=${c.x} hasImg=${c.hasImg} hasVideo=${c.hasVideo}${mediaInfo}`);
+      console.error('Sibling Debug:');
+      if (lastClipInfo.debug.siblings) {
+        lastClipInfo.debug.siblings.forEach(s => {
+          const mediaInfo = (s.hasImg || s.hasVideo) ? ' [MEDIA]' : '';
+          console.error(`  [${s.index}] ${s.tagName} id=${s.id} hasImg=${s.hasImg} hasVideo=${s.hasVideo}${mediaInfo}`);
         });
       }
     }
 
     if (lastClipInfo.selector) {
-      console.error(`Found rightmost clip: index=${lastClipInfo.clipIndex}, x=${Math.round(lastClipInfo.rect.x)}, totalClips=${lastClipInfo.totalClipsWithMedia}`);
+      console.error(`Found clip: siblingDistance=${lastClipInfo.siblingDistance}, method=${lastClipInfo.method}`);
       const lastClip = await page.$(lastClipInfo.selector);
       if (lastClip) {
         await lastClip.click({ force: true });
@@ -1253,7 +1215,7 @@ async function clickTimelineEnd(page) {
       console.error('No clip found: ' + (lastClipInfo.error || 'unknown'));
     }
   } catch (e) {
-    console.error('DOM structure search failed: ' + e.message);
+    console.error('Sibling search failed: ' + e.message);
   }
 
   // 方法2: 複数のクリップセレクタを試す
