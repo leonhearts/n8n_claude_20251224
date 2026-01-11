@@ -112,10 +112,12 @@ async function generateBaseImageInternal(page, config) {
       const pageText = await page.evaluate(() => document.body.innerText);
       consecutiveErrors = 0;
 
-      if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
+      if (pageText.includes('生成できませんでした') ||
+          pageText.includes('Could not generate') ||
+          pageText.includes('Something went wrong')) {
         console.error('Generation error detected on page');
         await page.screenshot({ path: '/tmp/veo3-image-generation-error.png' });
-        throw new Error('RETRY:Image generation failed: 生成できませんでした');
+        throw new Error('RETRY:Image generation failed');
       }
 
       // 「やり直す」ボタンの検出

@@ -400,9 +400,11 @@ async function generateImage(page, config, options = {}) {
       const pageText = await page.evaluate(() => document.body.innerText);
       consecutiveErrors = 0;
 
-      if (pageText.includes('生成できませんでした') || pageText.includes('Could not generate')) {
+      if (pageText.includes('生成できませんでした') ||
+          pageText.includes('Could not generate') ||
+          pageText.includes('Something went wrong')) {
         console.error('Generation error detected on page');
-        throw new Error('Image generation failed: 生成できませんでした');
+        throw new Error('RETRY:Image generation failed');
       }
     } catch (evalErr) {
       if (evalErr.message.includes('Execution context was destroyed') ||
@@ -417,7 +419,7 @@ async function generateImage(page, config, options = {}) {
         }
         continue;
       }
-      if (evalErr.message.includes('生成できませんでした')) {
+      if (evalErr.message.includes('RETRY:')) {
         throw evalErr;
       }
     }
